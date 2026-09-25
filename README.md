@@ -22,7 +22,7 @@ The internal workspace for Lux Management: models, team, accounts, subreddits, p
 ## Shipping an update
 
 1. **Change the program** in `src/lux-management.html` and raise the version in
-   `const APP_VERSION = '2.8.0';` (for example to `2.9.0`).
+   `const APP_VERSION = '2.8.1';` (for example to `2.9.0`).
 2. **Add release notes** to the top of `CHANGELOG.md`:
    ```
    ## 2.9.0
@@ -69,10 +69,30 @@ Drafts and pre-releases are ignored. Versions withdrawn with **Rewind everyone**
 - If the repository is ever made public, no token is needed.
 - Anyone can turn the GitHub check off on their computer with **Look for updates on GitHub** in Settings.
 - Downloads use `curl`, which comes with Windows 10 and 11 and with macOS.
-- **Moving the team from 2.7.1:** 2.7.1 and earlier only look in the shared folder, and only trust the
-  previous signing key (2.8.0 comes with a new one, see below). Publish 2.8.0 once through the shared folder
-  (step 6 above) with the **previous** key. From 2.8.0 on, updates can come straight from GitHub and only the
-  new key works.
+
+## Moving a workspace from an older Lux
+
+Lux 2.7.1 and earlier (the Windows app or the Claude web version) can't update to this version: install it
+fresh and bring the data over with one backup file.
+
+1. **In the old Lux:** **Import & export → Export**. Tick every box, **including "Audit log (all months)"**
+   (older versions leave that one unticked), then **Export backup (.json)**.
+2. **Install the new Lux** from the release and open it. It asks your name: type it.
+3. **In the new Lux:** **Import & export → Import** and choose the backup file. The preview lists every
+   section, the posting log and the audit log, all ticked. Under **Which person in this backup are you?** pick
+   yourself (Lux already picks the person with your name), then **Import**.
+4. **Everyone else**, on their own computer: install Lux and, if you share a data folder, point it at the same
+   folder (**Settings → Data folder → Change folder**). When Lux asks who is using the computer, they pick their
+   own name from the list, so their history stays theirs.
+
+What comes over: every record in every section, the whole posting log, the whole audit log (who made each
+change and when), and people's names. Importing the same file again adds nothing twice.
+
+What doesn't: files added under **Library → Files** in the old Windows app, because they aren't in the backup
+file. To bring those too, use the old app's automatic full backup instead of steps 1 and 3: copy the newest
+`lux-backup-….json` **and** the `Library files` folder from the old app's `backups` folder into the new Lux's
+backups folder (**Settings → Backups → Open folder**), then **Settings → Restore a backup**. A restore replaces
+everything in the new Lux, so do it before anyone starts working in it.
 
 ## The signing key
 
@@ -95,7 +115,8 @@ Drafts and pre-releases are ignored. Versions withdrawn with **Rewind everyone**
   `node scripts/new-signing-key.mjs path/to/new-key.json` writes a new key and puts its public half into
   `src/lux-management.html`. Publish that version once through the shared folder with the old key (it is the
   only key the computers trust until they update), then destroy the old key and replace the secret.
-  2.8.0 got a new key this way, because the previous one was uploaded to this repository.
+- The key in use since 2.8.1 is the definitive one. 2.8.0 trusted an earlier key, so a computer that still has
+  2.8.0 can't install updates signed with this one: install the current version from the release instead.
 
 ## The Mac app
 
