@@ -30,8 +30,8 @@ The internal workspace for Lux Management: models, team, accounts, subreddits, p
    ```
 3. **Commit and push** (GitHub Desktop: write a summary, **Commit to main**, then **Push origin**).
 4. **Publish a release** on GitHub: **Releases → Draft a new release → Choose a tag**, type `v2.9.0`
-   (it must match the version), give it a title, then **Publish release**.
-   Pushing a tag `v2.9.0` does the same, and GitHub then writes the release notes from the changelog.
+   (it must match the version), give it a title, then **Publish release**. Leave the description empty:
+   GitHub fills it in from the changelog, with download instructions. Pushing a tag `v2.9.0` does the same.
 5. **Wait about five minutes.** GitHub builds everything on a Mac and attaches it to the release:
    - `Lux-Management-Windows-2.9.0.zip`: full download for new Windows computers
    - `Lux-Management-Mac-2.9.0.dmg`: full download for new Macs

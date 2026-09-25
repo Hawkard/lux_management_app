@@ -90,6 +90,10 @@ jobs:
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
+            # A release published on GitHub with an empty description gets the changelog notes.
+            if [ -z "$(gh release view "$TAG" --json body --jq .body)" ]; then
+              gh release edit "$TAG" --notes-file .tmp/release-notes.md
+            fi
           else
             gh release create "$TAG" dist/* --verify-tag --title "Lux Management ${TAG#v}" --notes-file .tmp/release-notes.md
           fi
