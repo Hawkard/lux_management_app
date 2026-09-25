@@ -1,0 +1,26 @@
+# Never upload workspace data, settings, backups or keys
+data/
+config/
+backups/
+exports/
+versions/
+Lux updates/
+Library files/
+*.luxupdate
+lux-update-signing-key*.json
+*signing-key*.json
+*.key
+*.pem
+
+# Build output (made by scripts/build.py and GitHub)
+dist/
+app/dist/
+app/bin/
+app/resources/js/
+app/resources/index.html
+app/resources/release.json
+node_modules/
+.tmp/
+__pycache__/
+.DS_Store
+Thumbs.db

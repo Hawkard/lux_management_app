@@ -1,0 +1,58 @@
+name: Build release
+
+# Runs when you publish a release on GitHub (tag it v<version>, for example v2.8.0),
+# and can also be started by hand from the Actions tab to test a build.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the Neutralino CLI
+        run: npm install -g @neutralinojs/neu
+
+      - name: Build
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+        run: python3 scripts/build.py
+
+      # Optional. Only runs if you add a repository secret named LUX_SIGNING_KEY
+      # (Settings > Secrets and variables > Actions). Without it, publish the .neu
+      # from Lux: Settings > Program updates > Publish an update.
+      - name: Sign the update (only if a signing key secret exists)
+        env:
+          LUX_SIGNING_KEY: ${{ secrets.LUX_SIGNING_KEY }}
+        run: |
+          if [ -n "$LUX_SIGNING_KEY" ]; then
+            node scripts/sign-update.mjs dist/Lux-Management-*.neu
+          else
+            echo "No LUX_SIGNING_KEY secret, so no .luxupdate was made. Publish the .neu from Lux instead."
+          fi
+
+      - name: Keep the files with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: lux-management-build
+          path: dist/
+
+      - name: Attach the files to the release
+        if: ${{ github.event_name == 'release' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
