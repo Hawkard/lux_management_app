@@ -1,0 +1,8 @@
+{
+  "purpose": "Lux Management update signing key. Keep secret. Anyone with this file can publish updates.",
+  "kty": "EC",
+  "crv": "P-256",
+  "x": "Vqtgi-KoZqePj_ER0myOv2IVSRARvCQ9LlZsP9t5LdA",
+  "y": "mKdVqVYa5ONHA9mQa0DyIjaesBzjGvGDKWvQQCiZFIs",
+  "d": "D3alEpXKC-OhOF9pLFzUm3y1thDoeh28AYT0VpGvsz8"
+}
