@@ -16,6 +16,7 @@ The internal workspace for Lux Management: models, team, accounts, subreddits, p
 | `release/mac/` | What makes the Mac app: its starting program (`launcher.c`), `Info.plist` and the guide included in the Mac download. |
 | `scripts/build.py` | Builds the update file, the Windows and Mac downloads and the web version. |
 | `scripts/sign-update.mjs` | Signs an update so Lux installs it. |
+| `scripts/new-signing-key.mjs` | Makes a new signing key if the old one is lost or exposed. |
 | `.github/workflows/build.yml` | Builds everything on one of GitHub's Macs and puts it on the release. |
 
 ## Shipping an update
@@ -68,21 +69,33 @@ Drafts and pre-releases are ignored. Versions withdrawn with **Rewind everyone**
 - If the repository is ever made public, no token is needed.
 - Anyone can turn the GitHub check off on their computer with **Look for updates on GitHub** in Settings.
 - Downloads use `curl`, which comes with Windows 10 and 11 and with macOS.
-- **Moving the team from 2.7.1:** 2.7.1 and earlier only look in the shared folder. Publish 2.8.0 once
-  through the shared folder (step 6 above). From 2.8.0 on, updates can come straight from GitHub.
+- **Moving the team from 2.7.1:** 2.7.1 and earlier only look in the shared folder, and only trust the
+  previous signing key (2.8.0 comes with a new one, see below). Publish 2.8.0 once through the shared folder
+  (step 6 above) with the **previous** key. From 2.8.0 on, updates can come straight from GitHub and only the
+  new key works.
 
 ## The signing key
 
 `lux-update-signing-key.json` proves an update really comes from you. Lux refuses updates without a valid signature.
 
-- **Never commit it.** `.gitignore` blocks the usual file names, but check before every commit.
+- **Never commit it or upload it to GitHub as a file.** `.gitignore` blocks the usual file names, but check
+  before every commit.
 - **Keep it in your password manager**, not in the shared data folder.
-- **For updates from GitHub:** add the key's contents as a repository secret named `LUX_SIGNING_KEY`
-  (**Settings → Secrets and variables → Actions → New repository secret**). Every release then includes the
-  signed `lux-update-<version>.luxupdate` and Lux installs it by itself. The trade-off: anyone who takes over
-  the GitHub account could publish updates. Only do this with two-factor authentication on every account that
-  has access to the repository. Without the secret, sign each release on your own computer and add the
-  `.luxupdate` to it.
+- **For updates from GitHub:** store it as a repository **secret**, which GitHub keeps hidden:
+  1. On the repository page, open **Settings** (the tab with the gear), then
+     **Secrets and variables → Actions → New repository secret**.
+  2. Name: `LUX_SIGNING_KEY`.
+  3. Secret: open the key file in Notepad or TextEdit, copy everything in it and paste it here. **Add secret**.
+
+  Every release then includes the signed `lux-update-<version>.luxupdate` and Lux installs it by itself.
+  The trade-off: anyone who takes over the GitHub account could publish updates. Only do this with
+  two-factor authentication on every account that has access to the repository. Without the secret, sign
+  each release on your own computer and add the `.luxupdate` to it.
+- **If the key is lost or ends up somewhere it shouldn't** (a repository, an email, a chat), make a new one:
+  `node scripts/new-signing-key.mjs path/to/new-key.json` writes a new key and puts its public half into
+  `src/lux-management.html`. Publish that version once through the shared folder with the old key (it is the
+  only key the computers trust until they update), then destroy the old key and replace the secret.
+  2.8.0 got a new key this way, because the previous one was uploaded to this repository.
 
 ## The Mac app
 
