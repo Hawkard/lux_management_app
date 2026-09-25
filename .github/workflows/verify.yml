@@ -62,6 +62,7 @@ jobs:
           test -f "$H/versions/index.json"
           pgrep -lx LuxManagement
           screencapture -x "$RUNNER_TEMP/lux-mac.png" || true
+          sips -Z 1100 -s format jpeg -s formatOptions 45 "$RUNNER_TEMP/lux-mac.png" --out "$RUNNER_TEMP/lux-mac.jpg" > /dev/null && { echo BEGIN-SHOT; base64 -i "$RUNNER_TEMP/lux-mac.jpg" | fold -w 4000; echo END-SHOT; } || true
 
       - name: Lux restarts on a Mac (as after installing an update)
         run: |
@@ -105,7 +106,8 @@ jobs:
             }, process.env.GH_TOKEN);
             console.log(JSON.stringify(out));
             await b.close(); srv.close();
-            if (out.privateNoToken.status !== 404 || out.privateWithToken.status !== 200 || out.publicRepo.status !== 200) process.exit(1);
+            // Without a token: 404 (private), or 403 when GitHub's shared runner addresses used up the anonymous limit.
+            if (![403, 404].includes(out.privateNoToken.status) || out.privateWithToken.status !== 200 || out.publicRepo.status !== 200) process.exit(1);
           })().catch(e => { console.error(e); process.exit(1); });
           EOF
           node wk.cjs
@@ -152,6 +154,17 @@ jobs:
           if (!(Test-Path "$d\Recover Lux.bat")) { throw "Lux did not start" }
           if (!(Test-Path "$d\versions\index.json")) { throw "No version archive" }
           Get-Process LuxManagement
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $w = [Math]::Min(1100, $b.Width); $small = New-Object System.Drawing.Bitmap $bmp, $w, ([int]($b.Height * $w / $b.Width))
+          $jpg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object MimeType -eq 'image/jpeg'
+          $ep = New-Object System.Drawing.Imaging.EncoderParameters 1
+          $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 45L
+          $small.Save("$env:RUNNER_TEMP\lux-win.jpg", $jpg, $ep)
+          $s = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:RUNNER_TEMP\lux-win.jpg"))
+          'BEGIN-SHOT'; for ($i = 0; $i -lt $s.Length; $i += 4000) { $s.Substring($i, [Math]::Min(4000, $s.Length - $i)) }; 'END-SHOT'
       - name: curl downloads a release file the way Lux does (cmd.exe, like Lux)
         shell: pwsh
         env:
