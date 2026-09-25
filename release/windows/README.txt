@@ -31,7 +31,8 @@ WHAT IS IN THIS FOLDER
   Recover Lux.bat     Recovery tool, created when Lux first starts (see below).
 The data, config, backups and exports folders are created on first start.
 Nothing is saved anywhere else on the computer, and the app never sends your
-data over the internet.
+data over the internet. It only asks GitHub whether a new version of the
+program exists.
 
 SHARING WITH THE TEAM
 The app works alone on one computer. To share one workspace between
@@ -57,10 +58,13 @@ UPDATES
 Updates only replace resources.neu. The program file, your data, settings and
 backups are never touched, and the .exe does not change, so Windows does not warn
 again.
-- Getting an update: when a new version is placed in the "Lux updates" folder
-  inside the data folder, a gold bar offers it. Click "Install and restart".
-  Lux checks when it opens and every 30 minutes, or use
+- Getting an update: when a new version is published on GitHub, or placed in
+  the "Lux updates" folder inside the data folder, a gold bar offers it. Click
+  "Install and restart". Lux checks when it opens and every 30 minutes, or use
   Settings > Program updates > Check for updates.
+- GitHub: the repository is private, so Lux needs a read-only access token to
+  see it. The owner adds it once in Settings > Program updates > GitHub access;
+  every computer that uses the same data folder then gets updates from GitHub.
 - Only updates signed with the agency's signing key are accepted. A changed or
   forged update file is ignored.
 - Going back (Settings > Version history):
@@ -71,7 +75,9 @@ again.
   Your data is never changed by switching versions.
 - If Lux won't open at all: close it, then double-click "Recover Lux.bat" in
   the program folder, type the number of a version and press Enter.
-- Publishing an update (owner only): you receive a new resources.neu. Open
+- Publishing an update (owner only): new versions are published on GitHub (see
+  the README in the repository). To send one through the shared data folder
+  instead: you receive a new resources.neu (or a .neu file). Open
   Settings > Program updates > Publish an update, choose the new resources.neu,
   then choose the signing key file (lux-update-signing-key.json). Everyone using
   the same data folder is offered it. "Save a copy to send" makes a .luxupdate
@@ -122,7 +128,7 @@ O QUE HÁ NESTA PASTA
                       primeira vez (veja abaixo).
 As pastas data, config, backups e exports são criadas na primeira vez que o app
 abre. Nada é salvo em outro lugar do computador, e o app nunca envia seus dados
-pela internet.
+pela internet. Ele só pergunta ao GitHub se existe uma versão nova do programa.
 
 COMPARTILHAR COM A EQUIPE
 O app funciona sozinho em um computador. Para compartilhar um mesmo espaço
@@ -150,10 +156,15 @@ ATUALIZAÇÕES
 As atualizações só substituem o resources.neu. O programa, seus dados,
 configurações e backups nunca são alterados, e o .exe não muda, então o Windows
 não avisa de novo.
-- Receber uma atualização: quando uma nova versão é colocada na pasta
-  "Lux updates", dentro da pasta de dados, uma barra dourada a oferece. Clique
-  em "Instalar e reiniciar". O Lux verifica ao abrir e a cada 30 minutos, ou use
-  Configurações > Atualizações do programa > Procurar atualizações.
+- Receber uma atualização: quando uma nova versão é publicada no GitHub ou
+  colocada na pasta "Lux updates", dentro da pasta de dados, uma barra dourada a
+  oferece. Clique em "Instalar e reiniciar". O Lux verifica ao abrir e a cada 30
+  minutos, ou use Configurações > Atualizações do programa > Procurar
+  atualizações.
+- GitHub: o repositório é privado, então o Lux precisa de um token de acesso
+  somente leitura para vê-lo. O dono o adiciona uma vez em Configurações >
+  Atualizações do programa > Acesso ao GitHub; todos os computadores que usam a
+  mesma pasta de dados passam a receber as atualizações do GitHub.
 - Só são aceitas atualizações assinadas com a chave de assinatura da agência.
   Um arquivo alterado ou falsificado é ignorado.
 - Voltar (Configurações > Histórico de versões):
@@ -165,7 +176,9 @@ não avisa de novo.
 - Se o Lux não abrir de jeito nenhum: feche-o, clique duas vezes em
   "Recover Lux.bat" na pasta do programa, digite o número de uma versão e
   pressione Enter.
-- Publicar uma atualização (só o dono): você recebe um novo resources.neu. Abra
+- Publicar uma atualização (só o dono): as versões novas são publicadas no
+  GitHub (veja o README do repositório). Para enviar uma pela pasta de dados
+  compartilhada: você recebe um novo resources.neu (ou um arquivo .neu). Abra
   Configurações > Atualizações do programa > Publicar uma atualização, escolha o
   novo resources.neu e depois o arquivo da chave (lux-update-signing-key.json).
   Todos que usam a mesma pasta de dados recebem a atualização. "Salvar uma cópia

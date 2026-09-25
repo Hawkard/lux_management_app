@@ -4,6 +4,10 @@ Each release needs a `## x.y.z` heading with an `EN:` line and a `PT:` line.
 Those two lines become the notes people see in Lux's update bar, in their own language.
 The version must match `const APP_VERSION` in `src/lux-management.html`.
 
+## 2.8.0
+EN: Lux now runs on Mac as well as Windows, and can install updates straight from GitHub (Settings > Program updates). On Mac: an Edit menu for copy and paste, and a recovery tool. Restoring a backup now lists this computer's backups.
+PT: O Lux agora roda no Mac, além do Windows, e pode instalar atualizações direto do GitHub (Configurações > Atualizações do programa). No Mac: menu Editar para copiar e colar, e uma ferramenta de recuperação. Restaurar um backup agora mostra a lista de backups deste computador.
+
 ## 2.7.1
 EN: Fixes imports turning lists (tags, niches, subreddit lists) into text, which broke the Subreddits page and model profiles. Repairs damaged records automatically, restoring lists from backups. New spreadsheet import that matches your columns.
 PT: Corrige importações que transformavam listas (tags, nichos, listas de subreddits) em texto e quebravam a página Subreddits e os perfis das modelos. Repara os registros danificados automaticamente, restaurando listas dos backups. Nova importação de planilhas que reconhece suas colunas.

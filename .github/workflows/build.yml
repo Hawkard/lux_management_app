@@ -1,8 +1,12 @@
 name: Build release
 
-# Runs when you publish a release on GitHub (tag it v<version>, for example v2.8.0),
-# and can also be started by hand from the Actions tab to test a build.
+# Builds the Windows and Mac downloads (there is no Linux version) on one of GitHub's Macs.
+# Runs when a version tag like v2.8.0 is pushed, or a release with a new tag is published
+# on GitHub, and puts the files on that release (creating it if needed). Can also be
+# started by hand from the Actions tab to test a build; the files then stay with the run.
 on:
+  push:
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
@@ -10,49 +14,64 @@ on:
 permissions:
   contents: write
 
+# Publishing a release on GitHub also pushes its tag, which starts this twice.
+# The newer run replaces the older one, so the files are only uploaded once.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install the Neutralino CLI
-        run: npm install -g @neutralinojs/neu
+        run: npm install -g @neutralinojs/neu@11.7.2
 
       - name: Build
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          LUX_REQUIRE_MAC: '1'
         run: python3 scripts/build.py
 
       # Optional. Only runs if you add a repository secret named LUX_SIGNING_KEY
-      # (Settings > Secrets and variables > Actions). Without it, publish the .neu
-      # from Lux: Settings > Program updates > Publish an update.
+      # (Settings > Secrets and variables > Actions). Lux then installs the update straight
+      # from this release. Without it, publish the .neu from Lux (Settings > Program updates >
+      # Publish an update) or sign it on your computer and add the .luxupdate to the release.
       - name: Sign the update (only if a signing key secret exists)
         env:
           LUX_SIGNING_KEY: ${{ secrets.LUX_SIGNING_KEY }}
         run: |
           if [ -n "$LUX_SIGNING_KEY" ]; then
             node scripts/sign-update.mjs dist/Lux-Management-*.neu
+            (cd dist && shasum -a 256 lux-update-*.luxupdate >> SHA256SUMS.txt)
           else
-            echo "No LUX_SIGNING_KEY secret, so no .luxupdate was made. Publish the .neu from Lux instead."
+            echo "No LUX_SIGNING_KEY secret, so no .luxupdate was made. Lux can't install this release from GitHub by itself."
           fi
 
       - name: Keep the files with this run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: lux-management-build
           path: dist/
 
-      - name: Attach the files to the release
-        if: ${{ github.event_name == 'release' }}
+      - name: Put the files on the release
+        if: ${{ github.ref_type == 'tag' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "Lux Management ${TAG#v}" --notes-file .tmp/release-notes.md
+          fi
