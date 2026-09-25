@@ -1,0 +1,99 @@
+name: Build release
+
+# Builds the Windows and Mac downloads (there is no Linux version) on one of GitHub's Macs.
+# Runs when a version tag like v2.8.0 is pushed, or a release with a new tag is published
+# on GitHub, and puts the files on that release (creating it if needed). Can also be
+# started by hand from the Actions tab to test a build; the files then stay with the run.
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Publishing a release on GitHub also pushes its tag, which starts this twice.
+# The newer run replaces the older one, so the files are only uploaded once.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the Neutralino CLI
+        run: npm install -g @neutralinojs/neu@11.7.2
+
+      - name: Build
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          LUX_REQUIRE_MAC: '1'
+        run: python3 scripts/build.py
+
+      # Opens the Mac app from the disk image and waits for Lux to start, so a Mac app
+      # that doesn't open is never published.
+      - name: Check that the Mac app opens
+        run: |
+          hdiutil attach dist/Lux-Management-Mac-*.dmg -nobrowse -mountpoint /tmp/luxcheck
+          cp -R "/tmp/luxcheck/Lux Management.app" "$RUNNER_TEMP/"
+          hdiutil detach /tmp/luxcheck
+          codesign --verify --strict "$RUNNER_TEMP/Lux Management.app"
+          H="$HOME/Library/Application Support/Lux Management"
+          mkdir -p "$H/config" "$H/data/people"
+          echo '{"userId":"u_check"}' > "$H/config/settings.json"
+          echo '{"name":"Check","createdAt":1}' > "$H/data/people/u_check.json"
+          open "$RUNNER_TEMP/Lux Management.app"
+          for i in $(seq 1 45); do [ -f "$H/versions/index.json" ] && break; sleep 2; done
+          pkill -x LuxManagement || true
+          test -f "$H/versions/index.json" || { echo "The Mac app did not open."; exit 1; }
+          echo "The Mac app opened."
+
+      # Optional. Only runs if you add a repository secret named LUX_SIGNING_KEY
+      # (Settings > Secrets and variables > Actions). Lux then installs the update straight
+      # from this release. Without it, publish the .neu from Lux (Settings > Program updates >
+      # Publish an update) or sign it on your computer and add the .luxupdate to the release.
+      - name: Sign the update (only if a signing key secret exists)
+        env:
+          LUX_SIGNING_KEY: ${{ secrets.LUX_SIGNING_KEY }}
+        run: |
+          if [ -n "$LUX_SIGNING_KEY" ]; then
+            node scripts/sign-update.mjs dist/Lux-Management-*.neu
+            (cd dist && shasum -a 256 lux-update-*.luxupdate >> SHA256SUMS.txt)
+          else
+            echo "No LUX_SIGNING_KEY secret, so no .luxupdate was made. Lux can't install this release from GitHub by itself."
+          fi
+
+      - name: Keep the files with this run
+        uses: actions/upload-artifact@v6
+        with:
+          name: lux-management-build
+          path: dist/
+
+      - name: Put the files on the release
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            # A release published on GitHub with an empty description gets the changelog notes.
+            if [ -z "$(gh release view "$TAG" --json body --jq .body)" ]; then
+              gh release edit "$TAG" --notes-file .tmp/release-notes.md
+            fi
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "Lux Management ${TAG#v}" --notes-file .tmp/release-notes.md
+          fi
