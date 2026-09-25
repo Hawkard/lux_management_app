@@ -1,0 +1,177 @@
+name: Verify on Mac and Windows (temporary)
+
+# Temporary check of the new Mac and Windows builds on real machines, before the first release.
+# Runs only on this working branch; removed once the build is confirmed.
+on:
+  push:
+    branches: ['claude/ecstatic-davinci-wbroq4']
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: npm install -g @neutralinojs/neu@11.7.2
+      - name: Build
+        env:
+          LUX_REQUIRE_MAC: '1'
+        run: python3 scripts/build.py && cat .tmp/release-notes.md && cat dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+      - name: The app on the disk image is signed, universal and complete
+        run: |
+          hdiutil attach dist/Lux-Management-Mac-*.dmg -nobrowse -mountpoint /tmp/luxdmg
+          ls -la /tmp/luxdmg
+          cat /tmp/luxdmg/README.txt | head -20
+          cp -R "/tmp/luxdmg/Lux Management.app" /Applications/
+          hdiutil detach /tmp/luxdmg
+          APP="/Applications/Lux Management.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          plutil -p "$APP/Contents/Info.plist"
+          lipo -archs "$APP/Contents/MacOS/Lux Management"
+          lipo -archs "$APP/Contents/MacOS/LuxManagement"
+          vtool -show-build "$APP/Contents/MacOS/LuxManagement" | grep -E "architecture|minos" || true
+          ls -la "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+      - name: Lux opens on a Mac
+        run: |
+          H="$HOME/Library/Application Support/Lux Management"
+          mkdir -p "$H/config" "$H/data/people"
+          echo '{"userId":"u_ci"}' > "$H/config/settings.json"
+          echo '{"name":"CI","createdAt":1}' > "$H/data/people/u_ci.json"
+          open -a "/Applications/Lux Management.app"
+          for i in $(seq 1 45); do [ -f "$H/Recover Lux.command" ] && [ -f "$H/versions/index.json" ] && break; sleep 2; done
+          sleep 5
+          ls -la "$H" "$H/versions" "$H/config"
+          cat "$H/config/app-version.txt"
+          test -f "$H/resources.neu"
+          test -d "$H/backups" && test -d "$H/exports"
+          test -x "$H/Recover Lux.command"
+          test -f "$H/versions/index.json"
+          pgrep -lx LuxManagement
+          screencapture -x "$RUNNER_TEMP/lux-mac.png" || true
+
+      - name: Lux restarts on a Mac (as after installing an update)
+        run: |
+          H="$HOME/Library/Application Support/Lux Management"
+          ps -axo pid,command | grep "[L]uxManagement"
+          pkill -x LuxManagement; sleep 2
+          open -a "/Applications/Lux Management.app"
+          sleep 8
+          pgrep -lx LuxManagement
+          ps -axo pid,command | grep "[L]uxManagement"
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mac-screenshot
+          path: ${{ runner.temp }}/lux-mac.png
+          if-no-files-found: ignore
+
+      - name: GitHub answers the WebKit web view (as in the Mac app)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/wk" && cd "$RUNNER_TEMP/wk"
+          npm init -y > /dev/null && npm install playwright@1.56.1 > /dev/null && npx playwright install webkit > /dev/null
+          cat > wk.cjs <<'EOF'
+          const { webkit } = require('playwright');
+          const http = require('http');
+          const srv = http.createServer((q, r) => { r.writeHead(200, {'content-type': 'text/html'}); r.end('<p>lux</p>'); }).listen(8123);
+          (async () => {
+            const b = await webkit.launch();
+            const p = await b.newPage();
+            await p.goto('http://127.0.0.1:8123/');
+            const out = await p.evaluate(async token => {
+              const get = async (path, auth) => {
+                const r = await fetch('https://api.github.com/repos/' + path, {headers: Object.assign({Accept: 'application/vnd.github+json'}, auth ? {Authorization: 'Bearer ' + auth} : {}), cache: 'no-cache'});
+                return {status: r.status, remaining: r.headers.get('x-ratelimit-remaining'), n: r.ok ? (await r.json()).length : null};
+              };
+              return {privateNoToken: await get('Hawkard/lux_management_app/releases?per_page=30', ''),
+                      privateWithToken: await get('Hawkard/lux_management_app/releases?per_page=30', token),
+                      publicRepo: await get('neutralinojs/neutralino.js/releases?per_page=5', token)};
+            }, process.env.GH_TOKEN);
+            console.log(JSON.stringify(out));
+            await b.close(); srv.close();
+            if (out.privateNoToken.status !== 404 || out.privateWithToken.status !== 200 || out.publicRepo.status !== 200) process.exit(1);
+          })().catch(e => { console.error(e); process.exit(1); });
+          EOF
+          node wk.cjs
+
+      - name: curl downloads a release file the way Lux does
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ASSET=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/neutralinojs/neutralino.js/releases/tags/v6.9.0 | python3 -c "import json,sys; print([a['url'] for a in json.load(sys.stdin)['assets'] if a['name']=='neutralino.d.ts'][0])")
+          mkdir -p "$RUNNER_TEMP/dl" && cd "$RUNNER_TEMP/dl"
+          printf 'url = "%s"\noutput = "lux-dl.part"\ndump-header = "lux-dl.hdr"\nsilent\nshow-error\nconnect-timeout = 20\nmax-time = 60\nuser-agent = "Lux-Management/test"\nheader = "Accept: application/octet-stream"\nheader = "Authorization: Bearer %s"\n' "$ASSET" "$GH_TOKEN" > lux-dl.curl
+          /bin/sh -c "curl -K lux-dl.curl"; echo "exit $?"
+          head -1 lux-dl.hdr; LOC=$(grep -i '^location:' lux-dl.hdr | tr -d '\r' | cut -d' ' -f2-)
+          echo "redirects to: ${LOC%%\?*}"
+          printf 'url = "%s"\noutput = "lux-dl.part"\ndump-header = "lux-dl.hdr"\nsilent\nshow-error\nconnect-timeout = 20\nmax-time = 600\nuser-agent = "Lux-Management/test"\nlocation\n' "$LOC" > lux-dl.curl
+          /bin/sh -c "curl -K lux-dl.curl"; echo "exit $?"
+          grep -E '^HTTP/' lux-dl.hdr
+          grep -E '^HTTP/[0-9.]+ 200' lux-dl.hdr
+          head -c 200 lux-dl.part; echo
+
+  windows:
+    needs: mac
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist
+      - name: Lux opens on Windows
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist\Lux-Management-Windows-*.zip | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath C:\lux
+          $d = "C:\lux\Lux Management"
+          Get-ChildItem $d
+          (Get-FileHash "$d\LuxManagement.exe").Hash
+          New-Item -ItemType Directory -Force "$d\config", "$d\data\people" | Out-Null
+          [IO.File]::WriteAllText("$d\config\settings.json", '{"userId":"u_ci"}')
+          [IO.File]::WriteAllText("$d\data\people\u_ci.json", '{"name":"CI","createdAt":1}')
+          Start-Process "$d\LuxManagement.exe" -WorkingDirectory $d
+          for ($i = 0; $i -lt 45; $i++) { if ((Test-Path "$d\Recover Lux.bat") -and (Test-Path "$d\versions\index.json")) { break }; Start-Sleep 2 }
+          Start-Sleep 5
+          Get-ChildItem $d
+          if (!(Test-Path "$d\Recover Lux.bat")) { throw "Lux did not start" }
+          if (!(Test-Path "$d\versions\index.json")) { throw "No version archive" }
+          Get-Process LuxManagement
+      - name: curl downloads a release file the way Lux does (cmd.exe, like Lux)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $rel = Invoke-RestMethod -Headers @{Authorization = "Bearer $env:GH_TOKEN"} https://api.github.com/repos/neutralinojs/neutralino.js/releases/tags/v6.9.0
+          $asset = ($rel.assets | Where-Object name -eq 'neutralino.d.ts').url
+          $dir = "C:\luxdl"; New-Item -ItemType Directory -Force $dir | Out-Null
+          $cfg = "url = `"$asset`"`noutput = `"lux-dl.part`"`ndump-header = `"lux-dl.hdr`"`nsilent`nshow-error`nconnect-timeout = 20`nmax-time = 60`nuser-agent = `"Lux-Management/test`"`nheader = `"Accept: application/octet-stream`"`nheader = `"Authorization: Bearer $env:GH_TOKEN`"`n"
+          [IO.File]::WriteAllText("$dir\lux-dl.curl", $cfg)
+          $p = Start-Process cmd.exe -ArgumentList '/c "curl -K lux-dl.curl"' -WorkingDirectory $dir -Wait -PassThru -NoNewWindow
+          "exit $($p.ExitCode)"
+          Get-Content "$dir\lux-dl.hdr" | Select-String '^HTTP/'
+          $loc = ((Get-Content "$dir\lux-dl.hdr" | Select-String -Pattern '^location:\s*(.+)$').Matches[0].Groups[1].Value).Trim()
+          "redirects to: " + $loc.Split('?')[0]
+          $cfg = "url = `"$loc`"`noutput = `"lux-dl.part`"`ndump-header = `"lux-dl.hdr`"`nsilent`nshow-error`nconnect-timeout = 20`nmax-time = 600`nuser-agent = `"Lux-Management/test`"`nlocation`n"
+          [IO.File]::WriteAllText("$dir\lux-dl.curl", $cfg)
+          $p = Start-Process cmd.exe -ArgumentList '/c "curl -K lux-dl.curl"' -WorkingDirectory $dir -Wait -PassThru -NoNewWindow
+          "exit $($p.ExitCode)"
+          Get-Content "$dir\lux-dl.hdr" | Select-String '^HTTP/'
+          if (!(Get-Content "$dir\lux-dl.hdr" | Select-String '^HTTP/[0-9.]+ 200')) { throw "download failed" }
+          Get-Content "$dir\lux-dl.part" -TotalCount 3
+          curl.exe --version
