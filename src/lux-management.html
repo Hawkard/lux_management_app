@@ -3368,6 +3368,11 @@ function makeFileStore(root){
   const mt = {};
   const watchers = new Set();
   const writing = new Map();
+  // When this computer last changed each document (a counter). A sync that was already reading the folder
+  // must never undo such a change: it would drop a document written meanwhile, and the next change to it
+  // would start from nothing (an audit file or a posting-log week losing its earlier entries).
+  let ver = 0;
+  const localAt = {};
   let pend = false, scanning = null;
   const notify = () => { if (pend) return; pend = true; setTimeout(() => { pend = false; watchers.forEach(w => w()); }, 0); };
   const parent = p => p.split('/').slice(0, -1).join('/');
@@ -3393,24 +3398,27 @@ function makeFileStore(root){
   function sync(){
     if (scanning) return scanning;
     scanning = (async () => {
+      const since = ver, busy = new Set(writing.keys());
+      const mine = p => busy.has(p) || writing.has(p) || (localAt[p] || 0) > since;
       const paths = [];
       await scan(root, '', paths);
       const seen = new Set(paths);
       let changed = false;
       for (const p of paths){
-        if (writing.has(p)) continue;
+        if (mine(p)) continue;
         let st;
         try { st = await FSx.getStats(fileOf(root, p)); } catch (e){ continue; }
         const m = st.modifiedAt + ':' + st.size;
         if (mt[p] === m && p in mem) continue;
         try {
           const d = JSON.parse(await FSx.readFile(fileOf(root, p)));
+          if (mine(p)) continue;
           mt[p] = m;
           if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
           if (JSON.stringify(mem[p]) !== JSON.stringify(d)){ mem[p] = d; changed = true; }
         } catch (e) {}
       }
-      for (const p of Object.keys(mem)) if (!seen.has(p) && !writing.has(p)){ delete mem[p]; delete mt[p]; changed = true; }
+      for (const p of Object.keys(mem)) if (!seen.has(p) && !mine(p)){ delete mem[p]; delete mt[p]; changed = true; }
       if (changed) notify();
     })();
     scanning.catch(() => {}).then(() => { scanning = null; });
@@ -3426,6 +3434,7 @@ function makeFileStore(root){
   }
   function persist(p){
     if (!validDocPath(p)) return Promise.resolve();
+    localAt[p] = ++ver;
     const prev = writing.get(p) || Promise.resolve();
     const next = prev.catch(() => {}).then(async () => {
       if (p in mem) await writeOne(root, p, mem[p]);

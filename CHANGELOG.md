@@ -5,8 +5,8 @@ Those two lines become the notes people see in Lux's update bar, in their own la
 The version must match `const APP_VERSION` in `src/lux-management.html`.
 
 ## 2.8.1
-EN: Import & export now brings a whole workspace over from an older Lux, including the audit log (who changed what, and when) and people's names. Whoever imports picks which person in the backup they are. Long texts are no longer cut short when importing, and exports include the audit log by default.
-PT: Importar e exportar agora traz o espaço de trabalho inteiro de um Lux mais antigo, incluindo o registro de auditoria (quem mudou o quê, e quando) e os nomes das pessoas. Quem importa escolhe qual pessoa do backup é. Textos longos não são mais cortados na importação, e as exportações incluem o registro de auditoria por padrão.
+EN: Import & export now brings a whole workspace over from an older Lux, including the audit log (who changed what, and when) and people's names. Whoever imports picks which person in the backup they are. Long texts are no longer cut short when importing, and exports include the audit log by default. Fixes a rare case where the desktop app could lose entries in a new posting-log week or audit file while checking the data folder for changes.
+PT: Importar e exportar agora traz o espaço de trabalho inteiro de um Lux mais antigo, incluindo o registro de auditoria (quem mudou o quê, e quando) e os nomes das pessoas. Quem importa escolhe qual pessoa do backup é. Textos longos não são mais cortados na importação, e as exportações incluem o registro de auditoria por padrão. Corrige um caso raro em que o app de desktop podia perder entradas de uma semana nova do registro de postagens ou de um arquivo novo de auditoria enquanto verificava a pasta de dados.
 
 ## 2.8.0
 EN: Lux now runs on Mac as well as Windows, and can install updates straight from GitHub (Settings > Program updates). On Mac: an Edit menu for copy and paste, and a recovery tool. Restoring a backup now lists this computer's backups.
