@@ -43,6 +43,24 @@ jobs:
           LUX_REQUIRE_MAC: '1'
         run: python3 scripts/build.py
 
+      # Opens the Mac app from the disk image and waits for Lux to start, so a Mac app
+      # that doesn't open is never published.
+      - name: Check that the Mac app opens
+        run: |
+          hdiutil attach dist/Lux-Management-Mac-*.dmg -nobrowse -mountpoint /tmp/luxcheck
+          cp -R "/tmp/luxcheck/Lux Management.app" "$RUNNER_TEMP/"
+          hdiutil detach /tmp/luxcheck
+          codesign --verify --strict "$RUNNER_TEMP/Lux Management.app"
+          H="$HOME/Library/Application Support/Lux Management"
+          mkdir -p "$H/config" "$H/data/people"
+          echo '{"userId":"u_check"}' > "$H/config/settings.json"
+          echo '{"name":"Check","createdAt":1}' > "$H/data/people/u_check.json"
+          open "$RUNNER_TEMP/Lux Management.app"
+          for i in $(seq 1 45); do [ -f "$H/versions/index.json" ] && break; sleep 2; done
+          pkill -x LuxManagement || true
+          test -f "$H/versions/index.json" || { echo "The Mac app did not open."; exit 1; }
+          echo "The Mac app opened."
+
       # Optional. Only runs if you add a repository secret named LUX_SIGNING_KEY
       # (Settings > Secrets and variables > Actions). Lux then installs the update straight
       # from this release. Without it, publish the .neu from Lux (Settings > Program updates >
