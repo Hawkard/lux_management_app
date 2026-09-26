@@ -440,20 +440,26 @@ test('a backup with damaged colors imports its good ones', async t => {
   assert.deepEqual(L.errors, []);
 });
 
-test('a backup brings at most 1000 colors, for tags of up to 60 characters', async t => {
+test('a backup brings colors up to 1000 in all, for tags of up to 60 characters, and says when some are left out', async t => {
   const L = await open({ seed: withColors({ goth: VIOLET }) }); t.after(() => L.close());
   const colors = {};
   for (let i = 0; i < 1001; i++) colors['tag' + String(i).padStart(4, '0')] = PINK;
   colors['a' + 'x'.repeat(60)] = TEAL;
   colors['a' + 'y'.repeat(59)] = TEAL;
   await paste(L, backupOf({ meta: { tagColors: { colors } } }));
-  assert.deepEqual(previewLines(L).filter(x => x.startsWith('Tag colors')), ['Tag colors: 1000 (colors already set here are kept)']);
-  // Goth already has one: 999 more make 1000.
-  await runImport(L, 'Import finished: 0 added or updated, 0 skipped 999 tag colors added.');
+  assert.deepEqual(previewLines(L).filter(x => x.startsWith('Tag colors')), ['Tag colors: 1002 (only the first 1000 are imported; colors already set here are kept)']);
+  // Goth already has one: 999 more make 1000, and the other 3 are left out.
+  await runImport(L, 'Import finished: 0 added or updated, 0 skipped 999 tag colors added. Lux keeps up to 1000 tag colors, so 3 were left out.');
+  assert.deepEqual(localAudit(L).filter(e => e.a === 'imported').map(e => e.ch[0].to),
+    ['0 records added or updated, 0 skipped, 999 tag colors added, 3 tag colors left out (limit 1000)']);
   const stored = L.stored()['meta/tagColors'].colors;
   assert.equal(Object.keys(stored).length, 1000);
   assert.deepEqual([stored.goth, stored['a' + 'y'.repeat(59)], stored['a' + 'x'.repeat(60)], stored.tag0000, stored.tag0997, stored.tag0998],
     [VIOLET, TEAL, undefined, PINK, PINK, undefined]);
+  // Again, with no room left: nothing is added, and the message says so.
+  await paste(L, backupOf({ meta: { tagColors: { colors } } }));
+  await runImport(L, 'Import finished: 0 added or updated, 0 skipped Lux keeps up to 1000 tag colors, so 3 were left out.');
+  assert.equal(Object.keys(L.stored()['meta/tagColors'].colors).length, 1000);
   assert.deepEqual(L.errors, []);
 });
 
@@ -491,6 +497,12 @@ test('in Portuguese the tag color picker and the import line are translated', as
   assert.ok(previewLines(L).includes('Cores das tags: 1 (as cores já definidas aqui são mantidas)'), previewLines(L).join(' | '));
   await runImport(L, 'Importação concluída');
   assert.ok(toasts(L).includes('Importação concluída: 0 adicionados ou atualizados, 0 ignorados 1 cores de tags adicionadas.'), toasts(L).join(' | '));
+  const colors = {};
+  for (let i = 0; i < 1001; i++) colors['tag' + String(i).padStart(4, '0')] = SKY;
+  await paste(L, backupOf({ meta: { tagColors: { colors } } }));
+  assert.ok(previewLines(L).includes('Cores das tags: 1001 (só as primeiras 1000 são importadas; as cores já definidas aqui são mantidas)'), previewLines(L).join(' | '));
+  await runImport(L, 'Importação concluída');
+  assert.ok(toasts(L).includes('Importação concluída: 0 adicionados ou atualizados, 0 ignorados 999 cores de tags adicionadas. O Lux guarda até 1000 cores de tags, então 2 ficaram de fora.'), toasts(L).join(' | '));
   assert.deepEqual(L.errors, []);
 });
 
@@ -767,10 +779,11 @@ test('desktop: a damaged tag color file never stops Lux, and a post synced from 
   assert.deepEqual(deskErrors(L), []);
 });
 
-test('a watcher that fails never keeps the others from hearing about a change, in the preview and desktop stores', async t => {
+test('a watcher that fails never keeps the others from hearing about a change, and its error is still reported', async t => {
   const L = await open({ seed }); t.after(() => L.close());
-  const warned = [];
-  L.w.console.warn = e => warned.push(String(e && e.message || e));
+  // The desktop app's crash bar needs the error itself on the window's error event.
+  const reported = [];
+  L.w.addEventListener('error', e => reported.push(e.error && e.error.message));
   L.w.Neutralino = fakeNeutralino({ '/other/data/subs/s1.json': { name: 'r/goth' } });
   for (const [name, store] of [['preview', L.w.__lux.makeLocalStore()], ['desktop', L.w.__lux.makeFileStore('/other/data')]]){
     if (store.init) await store.init();
@@ -785,6 +798,31 @@ test('a watcher that fails never keeps the others from hearing about a change, i
     await L.sleep(50);
     assert.deepEqual(heard.slice(-2), [2, 3], name);
   }
-  assert.deepEqual(warned, ['broken watcher', 'broken watcher', 'broken watcher', 'broken watcher']);
-  assert.deepEqual(L.errors, []);
+  await L.sleep(50);
+  assert.deepEqual(L.errors, ['broken watcher', 'broken watcher', 'broken watcher', 'broken watcher']);
+  assert.deepEqual(reported, ['broken watcher', 'broken watcher', 'broken watcher', 'broken watcher']);
+});
+
+test('desktop: a model synced with a damaged list is repaired, and the models list keeps updating', async t => {
+  // Another computer's copy: Bea's NSFW list is an object whose toString isn't a function, and her Reddit username a
+  // list holding one. Lux's repair used to fail on both, so the models list stopped updating without a word.
+  const N = desk({ 'models/m1': model('Ava') });
+  const L = await open({ neutralino: N }); t.after(() => L.close());
+  await L.go('#t/models');
+  const names = () => L.$$('.tbl tbody tr').map(r => r.children[0].textContent);
+  N.write(DATA + '/models/m2.json', JSON.parse('{"name":"Bea","status":"Active","niche":[],"nsfwSubs":{"toString":"x"},"sfwSubs":[],"platforms":["Reddit"],"employees":[],"redditUser":[{"toString":"x"},"u/bea"]}'));
+  N.write(DATA + '/models/m3.json', model('Cleo'));
+  N.emit('watchFile');
+  await L.sleep(1200);
+  assert.deepEqual(names(), ['Ava', 'Bea', 'Cleo']);
+  // The usual repair: her list is emptied, and the missing list is named, since no backup has it.
+  assert.equal(L.$('.modal h2').textContent, 'Some lists could not be recovered');
+  L.click(L.button('OK')); await L.sleep(300);
+  const bea = N.read(DATA + '/models/m2.json');
+  assert.deepEqual([bea.nsfwSubs, bea.redditUser], [[], ', u/bea']);
+  N.write(DATA + '/models/m4.json', model('Dee'));
+  N.emit('watchFile');
+  await L.sleep(1200);
+  assert.deepEqual(names(), ['Ava', 'Bea', 'Cleo', 'Dee']);
+  assert.deepEqual(deskErrors(L), []);
 });
