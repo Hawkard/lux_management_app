@@ -11,6 +11,8 @@ const daysAgo = n => new Date(today.getFullYear(), today.getMonth(), today.getDa
 const tmOf = i => pad(Math.floor(i / 60)) + ':' + pad(i % 60);
 const monthFirst = ymd(new Date(today.getFullYear(), today.getMonth(), 1));
 const monthLast = ymd(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+const monthDay = n => new Date(today.getFullYear(), today.getMonth(), 1 + n);
+const olderNote = 'Only the most recent weeks are loaded here, so older posts are not shown or exported.';
 
 const seed = {
   ['posts/' + weekStart(today) + '_local']: { weekStart: weekStart(today), uid: 'local', entries: [
@@ -42,6 +44,7 @@ test('All time sits right of This month and shows every post', async t => {
   assert.equal(L.$$('.entry').length, 1);
   L.click(L.button('All time')); await L.sleep(300);
   assert.equal(L.$$('.entry').length, 2);
+  assert.ok(!hasText(L, olderNote));
   L.click(L.button('This month')); await L.sleep(300);
   assert.deepEqual(L.$$('.entry .etitle').map(x => x.textContent), ['Today']);
   assert.deepEqual(L.errors, []);
@@ -111,6 +114,23 @@ test('Stats shows the latest 1500 posts, Subreddits still counts every post', as
   const goth = L.$$('.tbl tbody tr').find(r => r.children[0].textContent === 'r/goth');
   assert.equal(goth.children[1].textContent, '1600');
   assert.ok(!L.$$('p').some(p => p.textContent.startsWith('Showing the latest')));
+  assert.deepEqual(L.errors, []);
+});
+
+test('This month shows every post, in Entries and in Stats, with no note', async t => {
+  // 2001 posts: 1000 on the 3rd, 1000 on the 2nd and 1 on the 1st of this month.
+  const list = Array.from({ length: 2000 }, (_, i) => ({ date: monthDay(2 - Math.floor(i / 1000)), tm: tmOf(i % 1000) }));
+  list.push({ date: monthDay(0), title: 'First of the month' });
+  const L = await open({ seed: postsSeed(list) }); t.after(() => L.close());
+  await L.go('#posts');
+  const noNote = () => !L.$$('p').some(p => p.textContent.startsWith('Showing the latest'));
+  L.click(L.button('This month')); await L.sleep(500);
+  assert.equal(L.$$('.daygroup').length, 3);
+  assert.equal(L.$$('.entry').length, 2001);
+  assert.ok(noNote());
+  mode(L, 'Stats'); await L.sleep(500);
+  assert.equal(L.$$('.tbl tbody tr').length, 2001);
+  assert.ok(noNote());
   assert.deepEqual(L.errors, []);
 });
 
@@ -185,25 +205,61 @@ function fakeDb(docs){
   return { queries, db: { collection: c => query(c, []), doc } };
 }
 
-test('web version: All time shows the newest 1000 weeks and says older ones are left out', async t => {
-  // 1005 weekly documents with one post each: "Newest" this week, "Oldest" 1004 weeks ago.
+// 1005 weekly documents with two posts each: "Newest" this week, "Oldest" 1004 weeks ago.
+function weeklyDocs(uid){
   const docs = {};
   for (let i = 0; i < 1005; i++){
     const ws = weekStart(daysAgo(7 * i));
-    docs[`posts/${ws}_u1`] = { weekStart: ws, uid: 'u1', entries: [
-      { id: 'w' + i, d: ws, tm: '10:00', p: 'TikTok', q: 1, ty: 'Video', title: i === 0 ? 'Newest' : i === 1004 ? 'Oldest' : 'Week ' + i } ] };
+    docs[`posts/${ws}_${uid}`] = { weekStart: ws, uid, entries: [
+      { id: 'w' + i, d: ws, tm: '10:00', p: 'TikTok', q: 1, ty: 'Video', title: i === 0 ? 'Newest' : i === 1004 ? 'Oldest' : 'Week ' + i },
+      { id: 'v' + i, d: ws, tm: '09:00', p: 'TikTok', q: 1, ty: 'Video', title: 'Early ' + i } ] };
   }
-  const { db, queries } = fakeDb(docs);
-  const L = await open({ claude: { use: async name => name === 'db' ? db : null } }); t.after(() => L.close());
+  return docs;
+}
+const webClaude = db => ({ use: async name => name === 'db' ? db : null });
+
+test('local preview: All time loads every week, and the notes offer the CSV', async t => {
+  const L = await open({ seed: weeklyDocs('local') }); t.after(() => L.close());
   await L.go('#posts');
-  const olderNote = 'Only the most recent weeks are loaded here, so older posts are not shown or exported.';
-  L.click(L.button('All time')); await L.sleep(400);
+  L.click(L.button('All time')); await L.sleep(500);
+  assert.ok(L.$$('.tbl b').some(b => b.textContent === '2010'), 'all 1005 weeks are loaded');
+  assert.ok(hasText(L, 'Showing the latest 120 days. Export CSV to see everything.'));
+  assert.ok(!hasText(L, olderNote));
+  mode(L, 'Stats'); await L.sleep(500);
+  assert.ok(hasText(L, 'Showing the latest 1500 posts. Export CSV to see everything.'));
+  assert.ok(!hasText(L, olderNote));
+  assert.deepEqual(L.errors, []);
+});
+
+test('web version: All time shows the newest 1000 weeks and says older ones are left out', async t => {
+  const { db, queries } = fakeDb(weeklyDocs('u1'));
+  const L = await open({ claude: webClaude(db) }); t.after(() => L.close());
+  await L.go('#posts');
+  L.click(L.button('All time')); await L.sleep(500);
   assert.deepEqual(queries.filter(q => q.col === 'posts').pop().ops, [{ orderBy: 'weekStart', dir: 'desc' }, { limit: 1000 }]);
   assert.equal(L.$('.entry .etitle').textContent, 'Newest');
-  assert.ok(L.$$('.tbl b').some(b => b.textContent === '1000'), 'the newest 1000 weeks are loaded');
+  assert.ok(L.$$('.tbl b').some(b => b.textContent === '2000'), 'the newest 1000 weeks are loaded');
   assert.ok(hasText(L, olderNote));
+  // The CSV holds only the loaded weeks, so the notes don't offer it.
+  assert.ok(hasText(L, 'Showing the latest 120 days.'));
+  mode(L, 'Stats'); await L.sleep(500);
+  assert.ok(hasText(L, olderNote));
+  assert.ok(hasText(L, 'Showing the latest 1500 posts.'));
+  mode(L, 'Entries'); await L.sleep(300);
   L.click(L.button('This month')); await L.sleep(400);
   assert.equal(queries.filter(q => q.col === 'posts').pop().ops[0].where, 'weekStart');
   assert.ok(!hasText(L, olderNote));
+  assert.deepEqual(L.errors, []);
+});
+
+test('web version: the notes are translated', async t => {
+  const { db } = fakeDb(weeklyDocs('u1'));
+  const L = await open({ claude: webClaude(db), lang: 'pt' }); t.after(() => L.close());
+  await L.go('#posts');
+  L.click(L.button('Todo o período')); await L.sleep(500);
+  assert.ok(hasText(L, 'Só as semanas mais recentes são carregadas aqui, então os posts mais antigos não aparecem nem são exportados.'));
+  assert.ok(hasText(L, 'Mostrando os últimos 120 dias.'));
+  mode(L, 'Estatísticas'); await L.sleep(500);
+  assert.ok(hasText(L, 'Mostrando os últimos 1500 posts.'));
   assert.deepEqual(L.errors, []);
 });
