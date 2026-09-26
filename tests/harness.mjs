@@ -5,7 +5,9 @@ const SRC = new URL('../src/lux-management.html', import.meta.url);
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // claude: optional stand-in for the Claude artifact runtime (window.claude), to run the web version.
-export async function open({ seed = {}, lang, claude } = {}) {
+// neutralino: optional stand-in for Neutralino (window.Neutralino), to run the desktop version with its program
+// folder at /app (so its data folder is /app/data unless the settings file says otherwise).
+export async function open({ seed = {}, lang, claude, neutralino } = {}) {
   const html = readFileSync(SRC, 'utf8');
   const errors = [];
   const dom = new JSDOM(html, {
@@ -15,6 +17,7 @@ export async function open({ seed = {}, lang, claude } = {}) {
       w.localStorage.setItem('lux-local-v1', JSON.stringify(seed));
       if (lang) w.localStorage.setItem('lux-lang', lang);
       if (claude) w.claude = claude;
+      if (neutralino){ w.NL_OS = 'Linux'; w.NL_PATH = '/app'; w.Neutralino = neutralino; }
     }
   });
   const w = dom.window;
