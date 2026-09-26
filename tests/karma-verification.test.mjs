@@ -126,11 +126,19 @@ test('CSV import reads Karma Verification, and every other cell as before', asyn
     ['Verificação por karma', 'Unknown', 'Karma Verification'], ['verificação por karma obrigatória', 'Unknown', 'Karma Verification'],
     ['Karma verification required', 'Unknown', 'Karma Verification'], ['required (karma 500+)', 'Unknown', 'Karma Verification'],
     ['500+ karma', 'Unknown', 'Karma Verification'], ['karma (no mínimo 500)', 'Unknown', 'Karma Verification'],
-    // Unless it also says no: that is unclear, so it is left out as before.
+    // Unless it also says no, never or optional: that is unclear, so it is left out as before.
     ['no karma verification', 'Unknown', 'Unknown'], ['karma not required', 'Unknown', 'Unknown'],
     ['not required (karma 500+)', 'Unknown', 'Unknown'], ['No (karma 100+)', 'Unknown', 'Unknown'], ['none, karma only', 'Unknown', 'Unknown'],
     ['without karma check', 'Unknown', 'Unknown'], ['karma: n/a', 'Unknown', 'Unknown'], ['sem verificação por karma', 'Unknown', 'Unknown'],
-    ['karma: não', 'Unknown', 'Unknown'], ['KARMA: NÃO', 'Unknown', 'Unknown']
+    ['karma: não', 'Unknown', 'Unknown'], ['KARMA: NÃO', 'Unknown', 'Unknown'],
+    ['Nenhuma verificação de karma', 'Unknown', 'Unknown'], ['Karma: nenhum', 'Unknown', 'Unknown'], ['Karma: opcional', 'Unknown', 'Unknown'],
+    ['Karma: nunca', 'Unknown', 'Unknown'], ['Karma dispensado', 'Unknown', 'Unknown'], ['Verificação por karma dispensada', 'Unknown', 'Unknown'],
+    ['Isento de karma', 'Unknown', 'Unknown'], ['Isenta de karma', 'Unknown', 'Unknown'],
+    ["Karma isn't required", 'Unknown', 'Unknown'], ['Karma isn’t required', 'Unknown', 'Unknown'], ["Doesn't need karma", 'Unknown', 'Unknown'],
+    ["Karma doesn't matter", 'Unknown', 'Unknown'], ['Karma optional', 'Unknown', 'Unknown'], ['Karma: never', 'Unknown', 'Unknown'],
+    // Or it also asks for a photo or selfie, which Karma Verification would lose.
+    ['Photo verification required (min karma 100)', 'Unknown', 'Unknown'], ['Selfie verification, karma 50', 'Unknown', 'Unknown'],
+    ['Obrigatória (foto), karma 100+', 'Unknown', 'Unknown'], ['Verificação com foto + karma 100', 'Unknown', 'Unknown']
   ];
   const csv = ['Subreddit,Verification', ...cases.map(([c], i) => `r/n${i},${/,/.test(c) ? `"${c}"` : c}`)].join('\n');
   await importCsv(L, csv, `Import finished: ${cases.length} added, 0 updated, 0 skipped`);
@@ -157,6 +165,22 @@ test('a CSV export keeps Karma Verification, and importing it back or updating t
   assert.equal(B.stored()['subs/s1'].members, 520000);
   assert.equal(B.stored()['subs/s1'].verification, 'Karma Verification');
   assert.deepEqual(A.errors, []); assert.deepEqual(B.errors, []);
+});
+
+test('an unclear verification cell leaves the saved value alone when an import updates the subreddit', async t => {
+  const L = await open({ seed: {
+    'subs/a': sub('r/a', { verification: 'Not required' }), 'subs/b': sub('r/b', { verification: 'Required' }),
+    'subs/c': sub('r/c', { verification: 'Karma Verification' }), 'subs/d': sub('r/d', { verification: 'Unknown' })
+  } }); t.after(() => L.close());
+  await importCsv(L, [
+    'Subreddit,Verification',
+    "r/a,Karma isn't required",
+    'r/b,Photo verification required (min karma 100)',
+    'r/c,Karma: opcional',
+    'r/d,karma'
+  ].join('\n'), 'Import finished: 0 added, 4 updated, 0 skipped');
+  assert.deepEqual(['a', 'b', 'c', 'd'].map(k => L.stored()['subs/' + k].verification), ['Not required', 'Required', 'Karma Verification', 'Karma Verification']);
+  assert.deepEqual(L.errors, []);
 });
 
 test('sorting by verification follows the dropdown', async t => {

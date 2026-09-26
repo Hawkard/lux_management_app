@@ -3000,9 +3000,12 @@ function convertValue(col, f, raw){
   }
   if (col === 'subs' && f.k === 'verification'){
     // Any mention of karma is karma verification ("karma", "Verificação por karma", "required (karma 500+)"), unless the
-    // text also says no or not ("no karma verification", "not required (karma 500+)"): that is unclear, so it is left out
-    // as before. "No mínimo" (at least) is not a no.
-    if (/karma/i.test(raw) && !/\b(no|not|none|without|n\/a|sem|n[ãa]o)\b/i.test(raw.replace(/\bno m[íi]nimo\b/gi, ''))) return 'Karma Verification';
+    // text also says no, never or optional ("no karma verification", "Karma isn't required", "Karma: nenhum"), or also
+    // asks for a photo or selfie ("Photo verification required (min karma 100)"), which Karma Verification would lose.
+    // Those are unclear, so they are left out as before, and an import that updates a subreddit keeps what is there.
+    // "No mínimo" (at least) is not a no.
+    const kv = raw.replace(/\bno m[íi]nimo\b/gi, '');
+    if (/karma/i.test(raw) && !/\b(no|not|none|never|without|n\/a|optional|sem|n[ãa]o|nenhum|nenhuma|nunca|opcional|dispensad[oa]|isent[oa])\b|n['’]t\b/i.test(kv) && !/\b(photo|foto|selfie)/i.test(kv)) return 'Karma Verification';
     if (/^(yes|y|true|1|x|✓|✔|required|sim|obrigatória|obrigatoria)$/i.test(raw)) return 'Required';
     if (/^(no|n|false|0|not required|none|não|nao)$/i.test(raw)) return 'Not required';
   }
