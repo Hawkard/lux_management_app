@@ -1217,7 +1217,8 @@ function userEditor(col, id, f){
 
 /* subreddit lists */
 // r/name from a name or a Reddit link: with or without https://, from any reddit.com host (www., old., m., np.…), spaces around the slash.
-function normSub(n){ n = String(n || '').trim().replace(/^(https?:\/\/)?([a-z0-9-]+\.)?reddit\.com/i, '').replace(/^\/?r\s*\/\s*/i, '').replace(/[\/?#].*$/, '').trim(); return n ? 'r/' + n : ''; }
+// Without https:// only a link (reddit.com/…) is read as one: text such as reddit.com, reddit.community or reddit.com.br stays as it is.
+function normSub(n){ n = String(n || '').trim().replace(/^(https?:\/\/([a-z0-9-]+\.)?reddit\.com(?=[\/?#:\s]|$)|([a-z0-9-]+\.)?reddit\.com(?=\/))/i, '').replace(/^\/?r\s*\/\s*/i, '').replace(/[\/?#].*$/, '').trim(); return n ? 'r/' + n : ''; }
 function linksEditor(col, id, f){
   const rec = S.data[col].get(id);
   const items = Array.isArray(rec[f.k]) ? rec[f.k] : [];
@@ -1338,7 +1339,8 @@ function refreshPeek(force){
   if (!S.peek || S.pop) return;
   const rec = S.data[S.peek.col].get(S.peek.id);
   if (!rec){ if (S.ready[S.peek.col]) closePeek(); return; }
-  if (rec === S.peek.rec && !force) return;
+  // A redraw put off while a box had focus (stale) is still owed, even when the record itself is unchanged.
+  if (rec === S.peek.rec && !force && !S.peek.stale) return;
   const p = $('#peek');
   const ae = document.activeElement;
   if (p.contains(ae) && ae !== p && (ae.tagName === 'TEXTAREA' || ae.isContentEditable || (ae.tagName === 'INPUT' && !['checkbox','radio','button'].includes(ae.type)))){ S.peek.stale = true; return; }
@@ -2176,16 +2178,18 @@ function modelsForSubSections(s){
   if (!normSub(s.name)) return [];
   const {assigned, suggested, banned} = modelsForSub(s);
   const nameEl = m => h('b', {style:colorStyle(m.color)}, titleOf('models', m));
+  // Remove and Assign change her lists, not this subreddit, so the panel is redrawn once they are saved.
+  const redraw = p => p.then(() => refreshPeek(true));
   return [
     h('div', {class:'sect'}, h('h3', null, t('Assigned to') + ` (${assigned.length})`),
       assigned.length ? h('ul', {class:'list'}, assigned.map(({m, list}) => h('li', null,
         h('span', {class:'l'}, h('button', {class:'linkbtn', onclick:() => openPeek('models', m.id)}, nameEl(m)), ' ', h('span', {class:'faint small'}, list === 'NSFW' ? t('NSFW list') : t('SFW list'))),
-        ro ? null : h('button', {class:'btn sm', onclick:() => unassignSub(m.id, s)}, t('Remove')))))
+        ro ? null : h('button', {class:'btn sm', onclick:() => redraw(unassignSub(m.id, s))}, t('Remove')))))
       : h('p', {class:'faint small', style:'margin:4px 0'}, t('Not on any model’s lists yet.'))),
     h('div', {class:'sect'}, h('h3', null, t('Suggested for') + ` (${suggested.length})`),
       suggested.length ? h('ul', {class:'list'}, suggested.map(({m, tags}) => h('li', null,
         h('span', {class:'l'}, h('button', {class:'linkbtn', onclick:() => openPeek('models', m.id)}, nameEl(m)), ' ', tags.map(x => h('span', {class:'chip tagm'}, x))),
-        ro ? null : h('button', {class:'btn sm primary', onclick:() => assignSub(m.id, s)}, t('Assign')))))
+        ro ? null : h('button', {class:'btn sm primary', onclick:() => redraw(assignSub(m.id, s))}, t('Assign')))))
       : h('p', {class:'faint small', style:'margin:4px 0'}, (s.tags || []).length ? t('No other models share these tags.') : t('Add tags to suggest this subreddit to models with the same niche.'))),
     h('div', {class:'sect'}, h('h3', null, t('Banned for') + ` (${banned.length})`),
       banned.length ? h('ul', {class:'list'}, banned.map(({m}) => h('li', null,

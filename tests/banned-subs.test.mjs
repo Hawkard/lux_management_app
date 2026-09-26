@@ -139,6 +139,33 @@ test('a subreddit on her NSFW or SFW list that she is banned in is marked Banned
   assert.deepEqual(L.errors, []);
 });
 
+test('the subreddit panel shows Remove and Assign at once, never Assign for a banned model, and waits while a box in it has focus', async t => {
+  const L = await open({ seed: {
+    'subs/s1': sub('r/goth'),
+    'models/m1': model('Ava', { nsfwSubs: [listed('r/goth')] }), 'models/m2': model('Bea'), 'models/m3': model('Cleo', { bannedSubs: [{ n: 'goth' }] })
+  } }); t.after(() => L.close());
+  await openSub(L, 'r/goth');
+  const press = (title, name, text) => L.click([...[...section(L, title).querySelectorAll('li')].find(li => li.querySelector('.linkbtn').textContent === name)
+    .querySelectorAll('button')].find(b => b.textContent === text));
+  assert.deepEqual(['Assigned to', 'Suggested for', 'Banned for'].map(s => names(section(L, s))), [['Ava'], ['Bea'], ['Cleo']]);
+  press('Assigned to', 'Ava', 'Remove'); await L.sleep(300);
+  assert.deepEqual(L.stored()['models/m1'].nsfwSubs, []);
+  assert.deepEqual(['Assigned to', 'Suggested for', 'Banned for'].map(s => names(section(L, s))), [[], ['Ava', 'Bea'], ['Cleo']]);
+  press('Suggested for', 'Bea', 'Assign'); await L.sleep(300);
+  assert.deepEqual(L.stored()['models/m2'].nsfwSubs.map(x => x.n), ['r/goth']);
+  assert.deepEqual(['Assigned to', 'Suggested for', 'Banned for'].map(s => names(section(L, s))), [['Bea'], ['Ava'], ['Cleo']]);
+  // Typing in the Rules box: the panel isn't redrawn under the cursor, and catches up when the box is left.
+  const rules = L.$('#peek textarea');
+  rules.focus();
+  press('Suggested for', 'Ava', 'Assign'); await L.sleep(300);
+  assert.deepEqual(L.stored()['models/m1'].nsfwSubs.map(x => x.n), ['r/goth']);
+  assert.equal(L.$('#peek textarea'), rules);
+  assert.deepEqual(names(section(L, 'Assigned to')), ['Bea']);
+  rules.blur(); await L.sleep(100);
+  assert.deepEqual(['Assigned to', 'Suggested for', 'Banned for'].map(s => names(section(L, s))), [['Ava', 'Bea'], [], ['Cleo']]);
+  assert.deepEqual(L.errors, []);
+});
+
 test('the banned list is edited like her other lists, and each change is in the audit log', async t => {
   const L = await open({ seed: { 'subs/s1': sub('r/goth'), 'subs/s2': sub('r/AltGoneWild'), 'models/m1': model('Ava') } }); t.after(() => L.close());
   await openModel(L, 'Ava');
@@ -170,6 +197,23 @@ test('subreddits written differently still match on her lists and in suggestions
   assert.deepEqual(suggested(L), []);
   // Nothing on her lists is banned, so nothing is marked.
   assert.deepEqual(rows(L, 'NSFW subreddits').flatMap(([, c]) => c), []);
+  assert.deepEqual(L.errors, []);
+});
+
+test('text that only looks like reddit.com is not read as a banned subreddit, and a subreddit named reddit.com keeps its name', async t => {
+  const L = await open({ seed: { 'subs/s1': sub('reddit.com'), 'subs/s2': sub('www.reddit.com'), 'subs/s3': sub(''), 'subs/s4': sub('r/goth') } });
+  t.after(() => L.close());
+  const { isBanned, bannedKeys } = L.w.__lux;
+  // reddit.com must be a whole host: what follows it is not cut off and read as a subreddit.
+  const m = { bannedSubs: [{ n: 'munity' }, { n: 'r/.br' }, { n: 'ics' }, { n: 'goth' }] };
+  for (const v of ['reddit.community', 'reddit.com.br', 'reddit.comics', 'reddit.com.br/r/goth', 'https://reddit.community/r/goth', 'https://www.reddit.com.br/r/goth', 'https://www.reddit.comics/r/x'])
+    assert.equal(isBanned(m, v), false, v);
+  // Without https:// only a link is read as one; the text on its own stays as it was.
+  assert.deepEqual([...bannedKeys({ bannedSubs: ['reddit.com', 'www.reddit.com', 'reddit.community', 'reddit.com.br', 'reddit.com/r/Goth'].map(n => ({ n })) })],
+    ['r/reddit.com', 'r/www.reddit.com', 'r/reddit.community', 'r/reddit.com.br', 'r/goth']);
+  // So only the subreddit with no name at all is offered for removal.
+  await L.go('#t/subs');
+  assert.equal(L.$('.banner span').textContent, '1 subreddits have no name, probably from an import that could not read the names.');
   assert.deepEqual(L.errors, []);
 });
 
@@ -294,6 +338,32 @@ test('a pasted link to a banned subreddit is warned about, even right after a wa
   assert.equal(hint(L).textContent, AGAIN);
   await logIt(L);
   assert.deepEqual(logged(L).map(e => e.pid), ['def456', 'ghi789']);
+  assert.deepEqual(L.errors, []);
+});
+
+test('a banned warning for one model does not let another banned model log there without her own warning', async t => {
+  // Ava and Bea are both banned in r/goth. Warned for Ava, then a TikTok link from Bea's account switches the model
+  // to Bea without a change event; back on Reddit the post would go to Bea, so she is warned about too.
+  const L = await open({ seed: {
+    'subs/s1': sub('r/goth'),
+    'models/m1': model('Ava', { platforms: ['Reddit', 'TikTok'], bannedSubs: [{ n: 'goth' }] }),
+    'models/m2': model('Bea', { platforms: ['Reddit', 'TikTok'], bannedSubs: [{ n: 'r/goth' }] }),
+    'accounts/t2': { username: 'bea_tt', platform: 'TikTok', status: 'Active', model: 'm2' }
+  } }); t.after(() => L.close());
+  await L.go('#posts');
+  await choose(L, 'm1', 'r/goth');
+  await logIt(L);
+  assert.equal(hint(L).textContent, AGAIN);
+  L.set(field(L, 'Link'), 'https://www.tiktok.com/@bea_tt/video/7300000000000000000', 'input'); await L.sleep(300);
+  assert.equal(field(L, 'Model').value, 'm2');
+  L.set(field(L, 'Link'), '', 'input'); await L.sleep(200);
+  L.click(L.$$('.logform .seg button').find(b => b.textContent === 'Reddit')); await L.sleep(200);
+  assert.deepEqual([field(L, 'Model').value, field(L, 'Subreddit').value], ['m2', 'r/goth']);
+  await logIt(L);
+  assert.equal(logged(L).length, 0, 'Bea in r/goth is warned about first');
+  assert.equal(hint(L).textContent, AGAIN);
+  await logIt(L);
+  assert.deepEqual(logged(L).map(e => [e.m, e.sub, e.p]), [['m2', 'r/goth', 'Reddit']]);
   assert.deepEqual(L.errors, []);
 });
 
