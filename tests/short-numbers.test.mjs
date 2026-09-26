@@ -18,8 +18,10 @@ async function importCsv(L, text, col, added){
   L.$('textarea[placeholder^="Or paste"]').value = text;
   L.click(L.button('Read pasted text')); await L.sleep(100);
   assert.equal(L.$('.preview select').value, col, 'the CSV is read as ' + col);
-  L.click(L.button('Import')); await L.sleep(500);
-  assert.ok(toasts(L).includes(`Import finished: ${added} added, 0 updated, 0 skipped`), toasts(L).join(' | '));
+  L.click(L.button('Import'));
+  const done = `Import finished: ${added} added, 0 updated, 0 skipped`;
+  for (let i = 0; i < 60 && !toasts(L).includes(done); i++) await L.sleep(50);
+  assert.ok(toasts(L).includes(done), toasts(L).join(' | '));
 }
 
 test('parseShortNumber understands letters, separators and decimals', async t => {
@@ -33,16 +35,19 @@ test('parseShortNumber understands letters, separators and decimals', async t =>
   ok('+50', 50); ok(' 2.5 K ', 2500); ok('0', 0); ok('1,000,000', 1000000); ok('1.000.000', 1000000); ok('0.5k', 500);
   ok('', null); ok('   ', null); ok(null, null); ok(undefined, null);
   bad('abc'); bad('1.2.3k'); bad('-5'); bad('+'); bad('5k+'); bad('1,000.000'); bad('k'); bad('1e6'); bad('1,2,3');
+  // 1,500k could be 1.5k or 1500k, so it is refused. 1,500m can only be 1.5m.
+  bad('1,500k'); bad('1.500k'); bad('4,300K'); ok('1,50k', 1500); ok('1,500m', 1500000);
 });
 
 test('formatting: short for tables, exact for editing', async t => {
   const L = await open(); t.after(() => L.close());
   const { formatShortNumber: f, editShortNumber: e, parseShortNumber: p } = L.w.__lux;
-  assert.equal(f(100000), '100k'); assert.equal(f(520000), '520k'); assert.equal(f(1250), '1.3k');
+  assert.equal(f(100000), '100k'); assert.equal(f(520000), '520k'); assert.equal(f(1250), '1.3k'); assert.equal(f(1150), '1.2k');
   assert.equal(f(1200000), '1.2m'); assert.equal(f(999), '999'); assert.equal(f(0), '0'); assert.equal(f(1000), '1k');
   assert.equal(f(999949), '999.9k'); assert.equal(f(999950), '1m'); assert.equal(f(999999), '1m'); assert.equal(f(null), '');
   assert.equal(e(520000), '520k'); assert.equal(e(1500), '1.5k'); assert.equal(e(1200000), '1.2m');
   assert.equal(e(123456), '123,456'); assert.equal(e(1250), '1,250'); assert.equal(e(999), '999'); assert.equal(e(0), '0');
+  assert.equal(e(1250000), '1,250,000'); assert.equal(e(1234500), '1,234,500'); assert.equal(e(2500000), '2.5m');
   assert.equal(e(null), ''); assert.equal(e(''), '');
   // What the box shows always reads back as the same number.
   for (const n of [0, 7, 999, 1000, 1100, 1250, 1500, 2300, 10050, 123456, 520000, 999999, 1000000, 1200000, 1250000, 1234500, 8200000, 25000000])
@@ -68,6 +73,9 @@ test('typing 520k in Members saves 520000 and shows 520k', async t => {
   L.set(members(), '1,5k'); await L.sleep(150);
   assert.equal(L.stored()['subs/s1'].members, 1500);
   assert.equal(members().value, '1.5k');
+  L.set(members(), '123456'); await L.sleep(150);
+  assert.equal(L.stored()['subs/s1'].members, 123456);
+  assert.equal(members().value, '123,456', 'the box shows the exact number');
   L.set(members(), '520000'); await L.sleep(150);
   assert.equal(L.stored()['subs/s1'].members, 520000);
   assert.equal(members().value, '520k');
@@ -107,6 +115,37 @@ test('a refused number keeps the value saved last, even before the panel redraws
   assert.equal(L.stored()['subs/s1'].members, 520000);
   assert.equal(members.value, '520k');
   assert.ok(toasts(L).includes('Type a number like 520k, 1.2m or 100000. Kept 520k.'), toasts(L).join(' | '));
+  L.set(members, '123456'); await L.sleep(150);
+  assert.equal(L.stored()['subs/s1'].members, 123456);
+  assert.equal(members.value, '123,456', 'after saving, the box shows the exact number');
+});
+
+test('the box opens with the exact number', async t => {
+  const L = await open({ seed: { 'subs/s1': sub('r/goth', { members: 123456, minKarma: 1240 }) } }); t.after(() => L.close());
+  await openSub(L);
+  assert.equal(box(L, 'Members').value, '123,456');
+  assert.equal(box(L, 'Minimum karma').value, '1,240');
+});
+
+test('in Portuguese the box groups digits the Brazilian way and reads them back', async t => {
+  const L = await open({ seed: { 'subs/s1': sub('r/goth', { members: 123456, minKarma: 1240 }) }, lang: 'pt' }); t.after(() => L.close());
+  const { editShortNumber: e, parseShortNumber: p } = L.w.__lux;
+  for (const n of [1250, 10050, 123456, 999999, 1250000, 1234500])
+    assert.deepEqual({ ...p(e(n)) }, { ok: true, value: n }, `${n} is shown as ${e(n)}`);
+  await openSub(L);
+  assert.equal(box(L, 'Membros').value, '123.456');
+  assert.equal(box(L, 'Karma mínimo').value, '1.240');
+  L.set(box(L, 'Membros'), '654.321'); await L.sleep(150);
+  assert.equal(L.stored()['subs/s1'].members, 654321);
+  assert.equal(box(L, 'Membros').value, '654.321');
+  // Letters keep the dot in both languages.
+  L.set(box(L, 'Membros'), '1,5k'); await L.sleep(150);
+  assert.equal(L.stored()['subs/s1'].members, 1500);
+  assert.equal(box(L, 'Membros').value, '1.5k');
+  L.click(L.$('.x')); await L.sleep(300);
+  const row = L.$('.tbl tbody tr').textContent;
+  assert.ok(row.includes('1.240') && row.includes('1.5k'), row);
+  assert.deepEqual(L.errors, []);
 });
 
 test('the number box and its message are translated', async t => {
@@ -126,20 +165,22 @@ test('Subreddits shows 520k-style numbers and still sorts by the real number', a
     'subs/b': sub('r/b', { members: 1000, minKarma: 5000 }),
     'subs/c': sub('r/c', { members: 520000, minKarma: 1250 }),
     'subs/d': sub('r/d', { members: 1200000 }),
-    'subs/e': sub('r/e', { members: 90000, minKarma: 0 })
+    'subs/e': sub('r/e', { members: 90000, minKarma: 0 }),
+    'subs/f': sub('r/f', { members: 1150, minKarma: 1240 })
   };
   const L = await open({ seed }); t.after(() => L.close());
   await L.go('#t/subs');
   const heads = () => L.$$('.tbl thead th');
   const at = label => heads().findIndex(th => th.textContent.replace(/[↑↓]/g, '') === label);
   const column = label => L.$$('.tbl tbody tr').map(r => r.children[at(label)].textContent);
-  assert.deepEqual(column('Minimum karma'), ['100', '5k', '1.3k', '', '0']);
+  // Members are rounded; a minimum karma is a threshold, so it is exact.
+  assert.deepEqual(column('Minimum karma'), ['100', '5k', '1,250', '', '0', '1,240']);
   L.click(heads()[at('Members')]); await L.sleep(100);
-  assert.deepEqual(column('Members'), ['999', '1k', '90k', '520k', '1.2m']);
+  assert.deepEqual(column('Members'), ['999', '1k', '1.2k', '90k', '520k', '1.2m']);
   L.click(heads()[at('Members')]); await L.sleep(100);
-  assert.deepEqual(column('Members'), ['1.2m', '520k', '90k', '1k', '999']);
+  assert.deepEqual(column('Members'), ['1.2m', '520k', '90k', '1.2k', '1k', '999']);
   L.click(heads()[at('Minimum karma')]); await L.sleep(100);
-  assert.deepEqual(column('Minimum karma'), ['0', '100', '1.3k', '5k', '']);
+  assert.deepEqual(column('Minimum karma'), ['0', '100', '1,240', '1,250', '5k', '']);
   assert.deepEqual(L.errors, []);
 });
 
@@ -147,8 +188,9 @@ test('Accounts karma and followers keep the plain number box and full numbers', 
   const seed = { 'accounts/a1': { username: 'alice', platform: 'Reddit', status: 'Active', karma: 12345, followers: 520000 } };
   const L = await open({ seed }); t.after(() => L.close());
   await L.go('#t/accounts');
+  // In English, other numbers follow the computer's own number format, as before.
   const row = L.$('.tbl tbody tr').textContent;
-  assert.ok(row.includes('12,345') && row.includes('520,000'), row);
+  assert.ok(row.includes((12345).toLocaleString()) && row.includes((520000).toLocaleString()), row);
   L.click(L.$('.tbl tbody tr')); await L.sleep(200);
   const karma = box(L, 'Karma');
   assert.equal(karma.type, 'number');
@@ -162,25 +204,25 @@ test('Accounts karma and followers keep the plain number box and full numbers', 
   assert.deepEqual(L.errors, []);
 });
 
-test('CSV import reads 100k, 1,5k and 100.000, and still reads what it read before', async t => {
+test('CSV import reads 100k, 1,5k and 100.000, in every number field', async t => {
   const L = await open(); t.after(() => L.close());
-  await importCsv(L, [
-    'Subreddit,Members,Minimum karma',
-    'r/plain,1234,',
-    'r/letters,100k,"1,5k"',
-    'r/dots,100.000,"100,000"',
-    'r/signs,+50,-5',
-    'r/words,100k members,500+',
-    'r/junk,abc,1.2M'
-  ].join('\n'), 'subs', 6);
+  // [cell, what 2.8.1 read, what is read now]
+  const cells = [
+    ['1234', 1234, 1234], ['', null, null], ['"100,000"', 100000, 100000], ['100k members', 100000, 100000], ['500+', 500, 500],
+    ['-5', -5, -5], ['abc', null, null], ['1.2M', 1200000, 1200000],
+    // 1,500k and 1.500k are refused as typed numbers, so the import reads them the way 2.8.1 did.
+    ['"4,300K"', 4300000, 4300000], ['1.500k', 1500, 1500],
+    // Read differently now: a Portuguese decimal comma or thousands dot, and a leading +.
+    ['"1,5k"', 15000, 1500], ['"10,5k"', 105000, 10500], ['"1,2m"', 12000000, 1200000], ['100.000', 100, 100000],
+    ['1.000', 1, 1000], ['12.345', 12, 12345], ['"12,5"', 125, 13], ['"1,5"', 15, 2], ['"0,5"', 5, 1], ['"12,34"', 1234, 12],
+    ['+50', null, 50]
+  ];
+  await importCsv(L, ['Subreddit,Members,Minimum karma', ...cells.map(([c], i) => `r/n${i},${c},${c}`)].join('\n'), 'subs', cells.length);
   const subs = storedIn(L, 'subs');
-  const got = name => { const r = byName(subs, 'name', name); return [r.members, r.minKarma]; };
-  assert.deepEqual(got('r/plain'), [1234, null]);
-  assert.deepEqual(got('r/letters'), [100000, 1500]);
-  assert.deepEqual(got('r/dots'), [100000, 100000]);
-  assert.deepEqual(got('r/signs'), [50, -5]);
-  assert.deepEqual(got('r/words'), [100000, 500]);
-  assert.deepEqual(got('r/junk'), [null, 1200000]);
+  cells.forEach(([c, , now], i) => {
+    const r = byName(subs, 'name', 'r/n' + i);
+    assert.deepEqual([r.members, r.minKarma], [now, now], c);
+  });
   // Every number field reads the same way, not only the Subreddits ones.
   await importCsv(L, [
     'Username,Platform,Karma,Followers',

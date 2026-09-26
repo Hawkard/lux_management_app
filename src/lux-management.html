@@ -498,7 +498,7 @@ const SCHEMA = {
       {k:'status', l:'Status', t:'select', o:['Active','Testing','Avoid','Banned'], d:'Active'},
       {k:'tags', l:'Tags', t:'tags', vocab:'niche'},
       {k:'verification', l:'Verification', t:'select', o:['Required','Not required','Unknown'], d:'Unknown'},
-      {k:'minKarma', l:'Minimum karma', t:'number', short:true},
+      {k:'minKarma', l:'Minimum karma', t:'number', short:true, exact:true},
       {k:'limit', l:'Posting limit', t:'text', ph:'e.g. 1 post per 24 h'},
       {k:'members', l:'Members', t:'number', short:true},
       {k:'rules', l:'Rules', t:'long', ph:'Title format, flair, what gets removed…'},
@@ -597,7 +597,8 @@ const daysUntil = s => Math.round((parseYmd(s) - parseYmd(today())) / 864e5);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const clip = (s, n) => { s = s == null ? '' : String(s); return s.length > n ? s.slice(0, n-1) + '…' : s; };
-// Numbers typed like 520k, 1.2m, 1,5k, 100,000 or 100.000. Empty means no number; anything else is refused.
+// Numbers typed like 520k, 1.2m, 1,5k, 100,000 or 100.000. Empty means no number; anything else is refused,
+// including 1,500k and 1.500k, which could mean 1.5k or 1500k.
 function parseShortNumber(raw){
   let s = String(raw == null ? '' : raw).trim().toLowerCase().replace(/\s+/g, '');
   if (!s) return {ok:true, value:null};
@@ -607,7 +608,7 @@ function parseShortNumber(raw){
   let num = m[1];
   const seps = (num.match(/[.,]/g) || []).length;
   if (m[2]){
-    if (seps > 1) return {ok:false, value:null};
+    if (seps > 1 || (m[2] === 'k' && /[.,]\d{3}$/.test(num))) return {ok:false, value:null};
     num = num.replace(',', '.');
   } else if (/^\d{1,3}([.,])\d{3}(?:\1\d{3})*$/.test(num)) num = num.replace(/[.,]/g, '');
   else if (seps > 1) return {ok:false, value:null};
@@ -617,7 +618,7 @@ function parseShortNumber(raw){
   if (m[2]) n *= m[2] === 'k' ? 1e3 : 1e6;
   return {ok:true, value:Math.round(n)};
 }
-// For tables: rounded to one decimal, like 520k or 1.3k.
+// For table columns: rounded to one decimal, like 520k or 1.3k.
 function formatShortNumber(n){
   if (n == null || n === '' || !isFinite(n)) return '';
   n = Number(n);
@@ -626,13 +627,13 @@ function formatShortNumber(n){
   if (Math.abs(n) >= 1e3) return k + 'k';
   return String(n);
 }
-// For the input box: exact, like 520k, 1.5k or 123,456.
+// Exact, for the input box and exact:true columns: 520k, 1.5k, 1.2m, or 123,456 (123.456 in Portuguese).
 function editShortNumber(n){
   if (n == null || n === '' || !isFinite(n)) return '';
   n = Number(n);
   if (n >= 1e6 && n % 1e5 === 0) return n / 1e6 + 'm';
-  if (n >= 1e3 && n % 100 === 0) return n / 1e3 + 'k';
-  return n.toLocaleString('en-US');
+  if (n >= 1e3 && n < 1e6 && n % 100 === 0) return n / 1e3 + 'k';
+  return n.toLocaleString(LANG === 'pt' ? 'pt-BR' : 'en-US');
 }
 Object.assign(LUX_TEST, {parseShortNumber, formatShortNumber, editShortNumber});
 const clone = o => o == null ? o : JSON.parse(JSON.stringify(o));
@@ -1049,7 +1050,7 @@ function displayValue(col, f, v){
     case 'date': return h('span', {class:(f.k === 'contentDue' || f.k === 'due') ? dueClass(v) : ''}, fmtDate(v));
     case 'url': return h('a', {href:hrefOf(v), target:'_blank', rel:'noopener noreferrer', onclick:e => e.stopPropagation()}, t('Open'));
     case 'user': return h('span', null, personName(v));
-    case 'number': return h('span', null, f.short ? formatShortNumber(Number(v)) : Number(v).toLocaleString(LOC()));
+    case 'number': return h('span', null, f.short ? (f.exact ? editShortNumber(Number(v)) : formatShortNumber(Number(v))) : Number(v).toLocaleString(LOC()));
     case 'rich': return h('span', {class:'faint'}, clip(htmlToText(v), 60));
     default:
       if (f.link) return h('a', {href:f.link(v), target:'_blank', rel:'noopener noreferrer', onclick:e => e.stopPropagation()}, clip(v, 40));
