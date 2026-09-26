@@ -137,25 +137,33 @@ test('a limit damaged by an old import is repaired first, then converted', async
   assert.deepEqual(L.errors, []);
 });
 
-// A stand-in for the web version's database. `slow` delays the first snapshot of some collections.
-function webDb(docs, slow = {}){
+// A stand-in for the web version's database (the server's documents are `docs`).
+// slow: {col: ms} delays a collection's final snapshot. cached: {col: docs} first delivers those documents marked
+// fromCache, the way the real one delivers a first page or an older cached copy. hang: paths whose update never finishes.
+function webDb(docs, { slow = {}, cached = {}, hang = [] } = {}){
   const copy = o => JSON.parse(JSON.stringify(o));
   const parent = p => p.slice(0, p.lastIndexOf('/'));
-  const run = (col, ops) => ({ docs: Object.keys(docs).filter(p => parent(p) === col).sort()
-    .filter(p => ops.every(o => o.op === '==' ? docs[p][o.f] === o.v : o.op === 'in' ? o.v.includes(docs[p][o.f]) : true))
-    .map(p => ({ id: p.slice(p.lastIndexOf('/') + 1), exists: true, data: () => copy(docs[p]) })) });
+  const run = (src, col, ops, fromCache = false) => ({ metadata: { fromCache, hasPendingWrites: false },
+    docs: Object.keys(src).filter(p => parent(p) === col).sort()
+      .filter(p => ops.every(o => o.op === '==' ? src[p][o.f] === o.v : o.op === 'in' ? o.v.includes(src[p][o.f]) : true))
+      .map(p => ({ id: p.slice(p.lastIndexOf('/') + 1), exists: true, data: () => copy(src[p]) })) });
   const doc = p => ({
     get: async () => ({ id: p.slice(p.lastIndexOf('/') + 1), exists: p in docs, data: () => (p in docs ? copy(docs[p]) : undefined) }),
     set: async d => { docs[p] = copy(d); },
-    update: async d => { if (!(p in docs)) throw { code: 'not_found', message: 'missing' }; Object.assign(docs[p], copy(d)); },
+    update: d => hang.includes(p) ? new Promise(() => {})
+      : (async () => { if (!(p in docs)) throw { code: 'not_found', message: 'missing' }; Object.assign(docs[p], copy(d)); })(),
     delete: async () => { delete docs[p]; }
   });
   const query = (col, ops) => ({
     where: (f, op, v) => query(col, ops.concat({ f, op, v })),
     orderBy: () => query(col, ops),
     limit: () => query(col, ops),
-    get: async () => run(col, ops),
-    onSnapshot: next => { setTimeout(() => next(run(col, ops)), slow[col] || 0); return () => {}; }
+    get: async () => run(docs, col, ops),
+    onSnapshot: next => {
+      if (cached[col]) setTimeout(() => next(run(cached[col], col, ops, true)), 0);
+      setTimeout(() => next(run(docs, col, ops)), slow[col] || 0);
+      return () => {};
+    }
   });
   return { collection: c => query(c, []), doc };
 }
@@ -168,7 +176,7 @@ test('web version: the conversion waits for subreddits, and the older migrations
     'subs/a': sub('r/a', { limit: '1/day' }),
     'subs/d': sub('r/d', { limit: 'ask mods first' })
   };
-  const L = await open({ claude: webClaude(webDb(docs, { subs: 1200 })) }); t.after(() => L.close());
+  const L = await open({ claude: webClaude(webDb(docs, { slow: { subs: 1200 } })) }); t.after(() => L.close());
   // open() waited 400 ms: the team has loaded and been updated; subreddits have not arrived yet.
   assert.equal(docs['employees/e1'].role, 'Reliever');
   assert.equal(docs['subs/a'].limit, '1/day');
@@ -178,6 +186,62 @@ test('web version: the conversion waits for subreddits, and the older migrations
   const entries = auditOf(Object.entries(docs).filter(([k]) => k.startsWith('audit/u1/m/')));
   assert.deepEqual(entries.map(e => e.n), ['Posting limits standardized: 1 subreddit']);
   assert.deepEqual(L.errors, []);
+});
+
+test('web version: a first page or older cached copy is never converted, only the final list', async t => {
+  // On the server a teammate already chose "2 posts per 12h" for r/a, and r/c's text can't be read as a limit.
+  const docs = {
+    'subs/a': sub('r/a', { limit: '2 posts per 12h' }),
+    'subs/b': sub('r/b', { limit: '1/day' }),
+    'subs/c': sub('r/c', { limit: 'ask mods first' }),
+    'subs/d': sub('r/d', { limit: 'once a week' })
+  };
+  const before = JSON.parse(JSON.stringify(docs));
+  // This computer first gets an older copy, and only part of it: no r/b.
+  const cached = {
+    'subs/a': sub('r/a', { limit: '1/day' }),
+    'subs/c': sub('r/c', { limit: 'once a week' }),
+    'subs/d': sub('r/d', { limit: 'ask mods first' })
+  };
+  const L = await open({ claude: webClaude(webDb(docs, { slow: { subs: 1000 }, cached: { subs: cached } })) }); t.after(() => L.close());
+  await L.go('#t/subs');
+  // The older copy is on screen, but nothing has been written.
+  assert.deepEqual(column(L, 'Posting limit'), ['1/day', 'once a week', 'ask mods first']);
+  assert.deepEqual(docs, before);
+  await L.sleep(900);
+  // The final list arrived (1 s after opening): only what it says is converted.
+  assert.equal(docs['subs/a'].limit, '2 posts per 12h', "a teammate's newer choice is kept");
+  assert.equal(docs['subs/b'].limit, '1 post per 24h');
+  assert.equal(docs['subs/c'].limit, 'ask mods first');
+  assert.equal(docs['subs/d'].limit, '1 post per week');
+  const entries = auditOf(Object.entries(docs).filter(([k]) => k.startsWith('audit/u1/m/')));
+  assert.equal(entries.length, 1);
+  assert.deepEqual(entries[0].ch.map(c => `${c.f}: ${c.from} -> ${c.to}`), ['r/b: 1/day -> 1 post per 24h', 'r/d: once a week -> 1 post per week']);
+  assert.deepEqual(L.errors, []);
+});
+
+test('the audit log gets one entry per 50 conversions', async t => {
+  const seed = {};
+  for (let i = 0; i < 105; i++) seed['subs/s' + String(i).padStart(3, '0')] = sub('r/s' + i, { limit: '1/day' });
+  const L = await open({ seed }); t.after(() => L.close());
+  await L.sleep(300);
+  const logged = standardized(localAudit(L));
+  assert.deepEqual(logged.map(e => [e.n, e.ch.length]), [
+    ['Posting limits standardized: 50 subreddits', 50], ['Posting limits standardized: 50 subreddits', 50], ['Posting limits standardized: 5 subreddits', 5]]);
+  assert.equal(new Set(logged.flatMap(e => e.ch.map(c => c.f))).size, 105);
+  assert.ok(Object.entries(L.stored()).filter(([k]) => k.startsWith('subs/')).every(([, v]) => v.limit === '1 post per 24h'));
+});
+
+test('web version: each batch of 50 is logged as soon as it is done', async t => {
+  // The 51st save never finishes, like a tab closed in the middle: the first 50 are already in the audit log.
+  const docs = {};
+  for (let i = 0; i < 60; i++) docs['subs/s' + String(i).padStart(2, '0')] = sub('r/s' + i, { limit: '1/day' });
+  const L = await open({ claude: webClaude(webDb(docs, { hang: ['subs/s50'] })) }); t.after(() => L.close());
+  await L.sleep(300);
+  assert.equal(docs['subs/s49'].limit, '1 post per 24h');
+  assert.equal(docs['subs/s51'].limit, '1/day');
+  const entries = auditOf(Object.entries(docs).filter(([k]) => k.startsWith('audit/u1/m/')));
+  assert.deepEqual(entries.map(e => [e.n, e.ch.length]), [['Posting limits standardized: 50 subreddits', 50]]);
 });
 
 test('web version: a view-only person converts nothing', async t => {
@@ -207,6 +271,7 @@ test('normalizeLimit is strict', async t => {
   // Other ways people write the same limits.
   for (const [raw, want] of [
     ['1 post / 24 hrs', '1 post per 24h'], ['1 post per 24 hours.', '1 post per 24h'], ['1 Post Per 24H', '1 post per 24h'],
+    ['1  post   per   24h', '1 post per 24h'], ['1\npost per day', '1 post per 24h'],
     ['1 post per 24 hour period', '1 post per 24h'], ['One post per day', '1 post per 24h'], ['once a day', '1 post per 24h'],
     ['once every 24 hours', '1 post per 24h'], ['1x per day', '1 post per 24h'], ['1 post daily', '1 post per 24h'], ['1/24h', '1 post per 24h'],
     ['twice a day', '2 posts per 24h'], ['2 times a day', '2 posts per 24h'], ['2x/day', '2 posts per 24h'], ['2/12h', '2 posts per 12h'],
@@ -225,7 +290,7 @@ test('normalizeLimit is strict', async t => {
   for (const raw of ['2 posts per week', 'twice a week', '1 post per 48h', '1 post per 2 days', '1 post per month', '3 posts por semana',
     '0 posts per day', '10 posts per day', '12 posts per day', '6/12h', '1-2 posts per day', '1.5 posts per day', '1 or 2 posts per day',
     '1 post per day per account', '1 post per 24h, no selling', '1 post per 24h?', '1 post per 24h (strict)', 'at least 1 post per day',
-    'min 1 post per day', '17 days', '1 week', '24h', '1 post', 'daily', 'weekly', 'every 24 hours', '1 per 24', '1 comment per day',
+    'min 1 post per day', '17 days', '1 post per 17 days', '1 post per 27 days', '1 week', '24h', '1 post', 'daily', 'weekly', 'every 24 hours', '1 per 24', '1 comment per day',
     '1 post and 1 comment per day', 'a post a day', 'no limit', 'none', 'unlimited', 'ask mods first', 'wait 24h between posts',
     '', '   ', null, undefined, 1]) is(raw, null);
 });
@@ -269,6 +334,29 @@ test('in Portuguese every place that shows a limit translates it, and English is
   const saved = L.stored()['models/m1'].nsfwSubs;
   assert.equal(saved.length, 1);
   assert.equal(saved[0].note, 'Min. karma 50 · 3 posts per 12h');
+  assert.deepEqual(L.errors, []);
+});
+
+test('old text that happens to be a word Lux translates is shown as typed', async t => {
+  // "Unknown" and "None" are in the Portuguese dictionary ("Não sei", "Nenhum"), but here they are someone's own text.
+  const seed = {
+    'subs/s1': sub('r/goth', { tags: ['Goth'], limit: 'Unknown' }),
+    'subs/s2': sub('r/alt', { tags: ['Goth'], limit: 'None' }),
+    'models/m1': { name: 'Ava', status: 'Active', niche: ['Goth'], nsfwSubs: [], sfwSubs: [], platforms: ['Reddit'], employees: [] }
+  };
+  const L = await open({ seed, lang: 'pt' }); t.after(() => L.close());
+  await L.go('#t/subs');
+  assert.deepEqual(column(L, 'Limite de postagem'), ['None', 'Unknown']);
+  await openSub(L, 'r/goth');
+  const sel = limitBox(L, 'Limite de postagem');
+  assert.equal(sel.value, 'Unknown');
+  assert.deepEqual([...sel.options].map(o => o.textContent), ['—', ...PT_OPTIONS, 'Unknown']);
+  assert.equal(shown(sel), 'Unknown');
+  L.click(L.$('.x')); await L.sleep(300);
+  await L.go('#t/models');
+  L.click(L.$$('.tbl tbody tr')[0]); await L.sleep(300);
+  assert.deepEqual(L.$$('#peek .suggrow .note').map(n => n.textContent), ['None', 'Unknown']);
+  assert.equal(L.stored()['subs/s1'].limit, 'Unknown');
   assert.deepEqual(L.errors, []);
 });
 

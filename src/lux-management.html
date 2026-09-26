@@ -565,13 +565,14 @@ const SCHEMA = {
 };
 const COLS = Object.keys(SCHEMA);
 const fieldOf = (col, k) => SCHEMA[col].fields.find(f => f.k === k);
-const optLabel = (f, v) => t(f.labels && f.labels[v] ? f.labels[v] : v);
+// A keep field's old value that is not an option is someone's own text: shown as typed, never translated.
+const optLabel = (f, v) => f.keep && !f.o.includes(v) ? String(v) : t(f.labels && f.labels[v] ? f.labels[v] : v);
 const secLabel = c => SCHEMA[c] ? t(SCHEMA[c].label) : c === 'posts' ? t('Posting log') : c === 'files' ? t('Library files') : t('Workspace');
 
 /* ---------- state ---------- */
 const S = {
   store:null, local:false, uid:null, user:null, dl:null, canWrite:true, isOwner:false,
-  data:Object.fromEntries(COLS.map(c => [c, new Map()])), ready:{},
+  data:Object.fromEntries(COLS.map(c => [c, new Map()])), ready:{}, fresh:{},
   profiles:{}, asked:new Set(), meInfo:null,
   route:{v:'home'}, v:{}, peek:null, pop:null,
   homeWeek:[], posts:[], postsSub:null, postsKey:'',
@@ -785,7 +786,8 @@ function makeRemoteStore(db){
   };
   const rows = s => s.docs.map(d => Object.assign({id:d.id}, d.data()));
   return {
-    watchCol:(col, cb, err, desc) => (desc ? db.collection(col).orderBy(desc, 'desc') : db.collection(col)).limit(1000).onSnapshot(s => cb(rows(s)), err),
+    // cb's second argument says whether the list is final: fromCache marks a first page or an older cached copy.
+    watchCol:(col, cb, err, desc) => (desc ? db.collection(col).orderBy(desc, 'desc') : db.collection(col)).limit(1000).onSnapshot(s => cb(rows(s), !(s.metadata && s.metadata.fromCache)), err),
     watchWhere:(col, f, op, v, cb, err) => db.collection(col).where(f, op, v).limit(1000).onSnapshot(s => cb(rows(s)), err),
     getCol:async col => rows(await retry(() => db.collection(col).limit(1000).get())),
     getWhere:async (col, f, op, v) => rows(await retry(() => db.collection(col).where(f, op, v).limit(1000).get())),
@@ -2130,6 +2132,7 @@ const subLinkEl = n => h('a', {href:subUrl(n), target:'_blank', rel:'noopener no
 function suggestionsForModelSection(m){
   const ro = !S.canWrite;
   const list = subsForModel(m);
+  const limitF = fieldOf('subs', 'limit');
   const hiddenN = (m.hiddenSubs || []).length;
   let body;
   if (!S.data.subs.size) body = h('p', {class:'faint small', style:'margin:4px 0'}, t('Add subreddits in the Subreddits tab and tag them. Subreddits with a tag matching her niche will be suggested here.'));
@@ -2138,7 +2141,7 @@ function suggestionsForModelSection(m){
   else body = h('div', {class:'sugg'}, list.map(({s, tags}) => h('div', {class:'suggrow'},
     h('div', {class:'sugmain'},
       h('div', null, subLinkEl(s.name), ' ', toneChip(s.kind || 'NSFW'), ' ', tags.map(x => h('span', {class:'chip tagm'}, x))),
-      h('div', {class:'note'}, [s.verification === 'Required' ? t('Verification required') : '', s.minKarma ? t('Min. karma {n}', {n:s.minKarma}) : '', s.limit ? t(s.limit) : '', s.rules ? clip(String(s.rules).replace(/\s+/g, ' '), 110) : ''].filter(Boolean).join(' · '))),
+      h('div', {class:'note'}, [s.verification === 'Required' ? t('Verification required') : '', s.minKarma ? t('Min. karma {n}', {n:s.minKarma}) : '', s.limit ? optLabel(limitF, s.limit) : '', s.rules ? clip(String(s.rules).replace(/\s+/g, ' '), 110) : ''].filter(Boolean).join(' · '))),
     ro ? null : h('span', {class:'btnrow', style:'margin:0;flex:none'},
       h('button', {class:'btn sm primary', onclick:() => assignSub(m.id, s)}, s.kind === 'SFW' ? t('Add to SFW') : t('Add to NSFW')),
       h('button', {class:'btn sm', title:t('Stop suggesting this subreddit for her'), onclick:() => hideSuggestion(m.id, s)}, t('Hide'))))));
@@ -2215,19 +2218,23 @@ async function runMigrations(){
     }
   }
   // Posting limits typed as free text become dropdown options when the match is certain; any other text stays as it is.
-  // Once per session, after subreddits have loaded and any repair of damaged records is done (both write the same field).
-  // Converting twice gives the same result, so two computers doing it at once agree. One audit entry, only if something changed.
-  if (!S.limitsMigrated && S.ready.subs && !S.repairing && !(S.repairs && S.repairs.size)){
+  // Once per session, from the first final list of subreddits (never a first page or an older cached copy, which could
+  // undo a teammate's newer choice), after any repair of damaged records is done (both write the same field).
+  // Converting twice gives the same result, so two computers doing it at once agree. One audit entry per 50 changes,
+  // written as it goes, and none if nothing changed.
+  if (!S.limitsMigrated && S.fresh.subs && !S.repairing && !(S.repairs && S.repairs.size)){
     S.limitsMigrated = true;
-    const ch = [];
+    let ch = [];
+    const log = () => { if (ch.length) audit('updated', 'subs', '', ch, `Posting limits standardized: ${ch.length} ${ch.length === 1 ? 'subreddit' : 'subreddits'}`); ch = []; };
     for (const {id} of [...S.data.subs.values()]){
       const s = S.data.subs.get(id);
       const n = s && typeof s.limit === 'string' && !LIMIT_OPTIONS.includes(s.limit) ? normalizeLimit(s.limit) : null;
       if (!n) continue;
       const saved = await S.store.update('subs/' + id, {limit:n}).then(() => true, () => false);
       if (saved) ch.push({f:titleOf('subs', s), from:s.limit, to:n});
+      if (ch.length === 50) log();
     }
-    if (ch.length) audit('updated', 'subs', '', ch.slice(0, 50), `Posting limits standardized: ${ch.length} ${ch.length === 1 ? 'subreddit' : 'subreddits'}`);
+    log();
   }
 }
 
@@ -4783,7 +4790,8 @@ async function boot(){
   }
 
   for (const c of COLS){
-    S.store.watchCol(c, rows => {
+    // definitive is false while the web version shows a first page or an older cached copy; the other stores are always final.
+    S.store.watchCol(c, (rows, definitive = true) => {
       const m = new Map();
       const old = S.data[c];
       for (let r of rows){
@@ -4792,6 +4800,7 @@ async function boot(){
         const o = old.get(r.id); m.set(r.id, o && same(o, r) ? o : r);
       }
       S.data[c] = m; S.ready[c] = true;
+      if (definitive) S.fresh[c] = true;
       if (c === 'employees') wantNames(rows.map(r => r.user));
       schedule();
     }, e => { if (e && e.code === 'revoked') toast(t('Access to this workspace changed. Reload to continue.'), true); else console.warn(e); });
