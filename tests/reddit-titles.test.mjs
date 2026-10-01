@@ -131,9 +131,9 @@ test('emojis show in the app\'s own font, and CSV exports start with a UTF-8 mar
   L.set(L.$('.logform input[placeholder="r/subreddit"]'), 'r/goth', 'input');
   await logPost(L);
   L.click(L.button('Export CSV')); await L.sleep(200);
+  // Without a download (as in the web version), the text to copy has no marker: it only helps Excel open a file.
   const csv = L.$('.modal textarea').value;
-  assert.equal(csv.charCodeAt(0), 0xFEFF);
-  assert.ok(csv.slice(1).startsWith('Date,Post time,Platform'));
+  assert.ok(csv.startsWith('Date,Post time,Platform'), JSON.stringify(csv.slice(0, 20)));
   assert.ok(csv.includes(TITLE));
   L.click(L.$('.modal button.primary')); await L.sleep(200);
   // Lux's own import reads such a file back: the marker is not part of the first column's name.
@@ -149,6 +149,23 @@ test('emojis show in the app\'s own font, and CSV exports start with a UTF-8 mar
   assert.equal(added[0].name, 'r/goth');
   assert.ok(added[0].notes.includes('Spooky 🖤 “night”'), added[0].notes);
   assert.deepEqual(L.errors, []);
+});
+
+test('desktop: a CSV export file starts with the UTF-8 marker and keeps emojis', async t => {
+  const N = desk({ 'models/m1': ava }, null);
+  const L = await open({ neutralino: N }); t.after(() => L.close());
+  await L.go('#posts');
+  L.set(field(L, 'Post Title'), TITLE, 'input');
+  L.set(L.$('.logform input[placeholder="r/subreddit"]'), 'r/goth', 'input');
+  await logPost(L);
+  L.click(L.button('Export CSV')); await L.sleep(300);
+  const saved = [...N.files.keys()].filter(p => p.startsWith('/app/exports/') && p.endsWith('.csv'));
+  assert.equal(saved.length, 1);
+  const csv = N.files.get(saved[0]);
+  assert.equal(csv.charCodeAt(0), 0xFEFF);
+  assert.ok(csv.slice(1).startsWith('Date,Post time,Platform'));
+  assert.ok(csv.includes(TITLE));
+  assert.deepEqual(deskErrors(L), []);
 });
 
 test('desktop lookup fills a Reddit title from oEmbed but never overwrites a typed one', async t => {
@@ -357,6 +374,42 @@ test('the web version: a slow duplicate check for an earlier link never fills in
   assert.deepEqual(L.errors, []);
 });
 
+test('a link typed by hand is looked up once typing stops, never at a half-typed post ID; a pasted one at once', async t => {
+  const L = await open({ seed: { 'models/m1': ava } }); t.after(() => L.close());
+  const calls = [];
+  L.w.__lux.setFetcherForTests(async url => { calls.push(url); return oembed; });
+  await L.go('#posts');
+  const link = field(L, 'Link');
+  const type = async text => {
+    for (const ch of text){ link.value += ch; link.dispatchEvent(new L.w.InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch })); await L.sleep(20); }
+  };
+  await type('https://www.reddit.com/r/goth/comments/abc123/');
+  // On the way, ".../comments/abc" and ".../comments/abc1" were links to other posts: none was asked for.
+  assert.deepEqual(calls, []);
+  await L.sleep(500);
+  assert.deepEqual(calls, [OEMBED('abc123')]);
+  assert.equal(field(L, 'Post Title').value, TITLE);
+  // Typing more to a link already looked up (the same post): its details at once, nothing new asked.
+  await type('?x=1');
+  assert.ok(chips(L).includes(FOUND));
+  // Pasted (even without a paste event) or dropped: at once.
+  L.set(link, '', 'input');
+  for (const [inputType, id] of [['insertFromPaste', 'def456'], ['insertFromDrop', 'ghi789']]){
+    link.value = `https://www.reddit.com/r/goth/comments/${id}/`;
+    link.dispatchEvent(new L.w.InputEvent('input', { bubbles: true, inputType })); await L.sleep(50);
+    assert.equal(calls[calls.length - 1], OEMBED(id), inputType);
+  }
+  assert.equal(calls.length, 3);
+  // Typed and logged before typing stopped: nothing is asked for the logged post.
+  L.set(link, '', 'input');
+  await type('https://www.reddit.com/r/goth/comments/jkl012/');
+  await logPost(L);
+  await L.sleep(500);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(logged(L).map(e => e.pid), ['jkl012']);
+  assert.deepEqual(L.errors, []);
+});
+
 test('the web version never looks anything up', async t => {
   const docs = { 'models/m1': ava };
   const L = await open({ claude: webClaude(docs) }); t.after(() => L.close());
@@ -379,9 +432,12 @@ test('the web version never looks anything up', async t => {
 });
 
 test('desktop: fetchText runs curl with a config file, never the address on a command line, and keeps emojis', async t => {
-  // Files left by a Lux closed during a lookup are removed; anything else in the folder is kept.
+  // Files left by a Lux closed during a lookup are removed; a fresh one (another Lux window's lookup) and anything else
+  // in the folder are kept.
   const N = desk({}, async () => ({ code: 0, body: oembed }), {}, { '/app/lookup/lux-lookup-7.out': 'old page',
-    '/app/lookup/lux-lookup-7.curl': 'url = "https://www.reddit.com/old"', '/app/lookup/notes.txt': 'mine' });
+    '/app/lookup/lux-lookup-mfz3k2a1b2c3.curl': 'url = "https://www.reddit.com/old"', '/app/lookup/lux-lookup-mg01x9q8w7e6.out': 'running',
+    '/app/lookup/notes.txt': 'mine' });
+  for (const f of ['lux-lookup-7.out', 'lux-lookup-mfz3k2a1b2c3.curl']) N.mtime.set('/app/lookup/' + f, Date.now() - 3 * 60e3);
   const L = await open({ neutralino: N }); t.after(() => L.close());
   assert.equal(L.w.__lux.lookupEnabled(), true);
   const text = await L.w.__lux.fetchText(OEMBED('abc123'));
@@ -389,7 +445,7 @@ test('desktop: fetchText runs curl with a config file, never the address on a co
   assert.equal(JSON.parse(text).title, TITLE);
   assert.equal(N.spawned.length, 1);
   const run = N.spawned[0];
-  assert.match(run.command, /^curl -K lux-lookup-\d+\.curl$/);
+  assert.match(run.command, /^curl -K lux-lookup-[0-9a-z]+\.curl$/);
   assert.equal(run.cwd, '/app/lookup');
   assert.ok(run.text.includes(`url = "${OEMBED('abc123')}"\n`), run.text);
   assert.deepEqual(Object.assign({}, run.config, { header: [...run.config.header] }), {
@@ -401,7 +457,7 @@ test('desktop: fetchText runs curl with a config file, never the address on a co
   assert.equal(N.spawned[1].config['user-agent'], 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
   assert.notEqual(N.spawned[1].command, run.command, 'every download has its own files');
   // Nothing is left behind, and the updater's files are never used.
-  assert.deepEqual(lookupFiles(N), ['/app/lookup/notes.txt']);
+  assert.deepEqual(lookupFiles(N).sort(), ['/app/lookup/lux-lookup-mg01x9q8w7e6.out', '/app/lookup/notes.txt']);
   assert.ok(N.spawned.every(r => !/lux-dl/.test(r.command + r.text)));
   assert.deepEqual(N.killed, []);
   assert.deepEqual(deskErrors(L), []);
@@ -434,6 +490,38 @@ test('desktop: fetchText answers null for every kind of failure, and cleans up',
   }
   assert.deepEqual(lookupFiles(N), []);
   assert.deepEqual(deskErrors(L), []);
+});
+
+test('desktop: two Lux windows on one computer never mix up their lookups or remove each other’s files', async t => {
+  const held = [];
+  const N = desk({ 'models/m1': ava }, url => new Promise(r => held.push([url, r])));
+  const A = await open({ neutralino: N }); t.after(() => A.close());
+  const B = await open({ neutralino: N }); t.after(() => B.close());
+  await A.go('#posts'); await B.go('#posts');
+  paste(A, LINK); await A.sleep(200);
+  const running = lookupFiles(N);
+  assert.equal(running.length, 1, 'the config of the lookup running in the first window');
+  // The second window's first lookup clears old leftovers only.
+  paste(B, 'https://www.reddit.com/r/goth/comments/def456/other_post/'); await B.sleep(200);
+  assert.ok(running.every(p => N.files.has(p)));
+  assert.equal(N.spawned.length, 2);
+  assert.notEqual(N.spawned[0].command, N.spawned[1].command);
+  // Both answer at the same moment, and each window gets its own.
+  for (const [url, r] of held) r({ code: 0, body: JSON.stringify({ title: url === OEMBED('abc123') ? 'For A 🖤' : 'For B ✨' }) });
+  await A.sleep(300);
+  assert.equal(field(A, 'Post Title').value, 'For A 🖤');
+  assert.equal(field(B, 'Post Title').value, 'For B ✨');
+  assert.deepEqual(lookupFiles(N), []);
+  assert.deepEqual(deskErrors(A).concat(deskErrors(B)), []);
+});
+
+test('curl settings are quoted safely, and a value with a line break is refused', async t => {
+  const L = await open(); t.after(() => L.close());
+  const q = L.w.__lux.curlQuote;
+  assert.equal(q('https://www.reddit.com/r/goth/'), '"https://www.reddit.com/r/goth/"');
+  assert.equal(q('a "b" \\c'), '"a \\"b\\" \\\\c"');
+  for (const bad of ['https://www.reddit.com/x\nurl = "https://evil.com/"', 'a\rb', 'a\r\nb', 'a\u0000b', 'a\tb', 'a\u007fb'])
+    assert.throws(() => q(bad), /line break/, JSON.stringify(bad));
 });
 
 test('desktop: addresses outside the three platforms, or with unsafe characters, are never asked for', async t => {

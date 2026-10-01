@@ -43,17 +43,19 @@ export async function open({ seed = {}, lang, claude, neutralino } = {}) {
 // promise of it, where config holds the config file's settings ('user-agent', 'max-time', ...) and body, when given, is
 // written to the config's output file. It can be changed later (N.curl = ...); without it no program runs. Every program
 // started is recorded in spawned ({id, command, cwd, config, text}), and every one stopped in killed.
+// mtime holds each file's modification time in milliseconds, like Neutralino's getStats; a test may set it.
 export function fakeNeutralino(start, { curl } = {}){
   const files = new Map(), dirs = new Set(), mtime = new Map(), handlers = {};
   const spawned = [], killed = [];
-  let clock = 1000, pids = 0;
+  let clock = Date.now(), pids = 0;
   const addDirs = p => { const a = p.split('/'); for (let i = 2; i < a.length; i++) dirs.add(a.slice(0, i).join('/')); };
-  const put = (p, text) => { addDirs(p); files.set(p, text); mtime.set(p, ++clock); };
+  // Every write gets a later time than the one before, even within the same millisecond.
+  const put = (p, text) => { addDirs(p); files.set(p, text); mtime.set(p, clock = Math.max(clock + 1, Date.now())); };
   for (const [p, v] of Object.entries(start)) put(p, typeof v === 'string' ? v : JSON.stringify(v));
   const missing = () => Promise.reject({ code: 'NE_FS_NOPATHE', message: 'no such file or folder' });
   const emit = (name, detail) => (handlers[name] || []).slice().forEach(fn => fn({ detail }));
   const N = {
-    files, emit, curl, spawned, killed,
+    files, mtime, emit, curl, spawned, killed,
     read: p => files.has(p) ? JSON.parse(files.get(p)) : undefined,
     write: (p, v) => put(p, JSON.stringify(v)),
     init: () => { setTimeout(() => emit('ready'), 0); },

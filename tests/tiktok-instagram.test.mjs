@@ -103,6 +103,12 @@ test('the Instagram page parser copes with its markup and never guesses a number
   const own = '<meta property="og:url" content="https://www.instagram.com/p/C9xAb12Cd/">';
   assert.deepEqual(p(meta('5 likes, 1 comment - ava.rose on May 1, 2025: &quot;Mine&quot;', own), 'C9xAb12Cd'), { ups: 5, title: 'Mine' });
   assert.equal(p(meta('5 likes, 1 comment - ava.rose on May 1, 2025: &quot;Not mine&quot;', own), 'C0therPost'), null);
+  // Its own address written any way Instagram writes it; never a longer code that only starts the same.
+  for (const [url, ok] of [['https://www.instagram.com/p/C9xAb12Cd', true], ['https://www.instagram.com/p/C9xAb12Cd/?hl=en', true],
+    ['https://www.instagram.com/p/C9xAb12Cd?utm_source=ig', true], ['https://www.instagram.com/reel/C9xAb12Cd/', true],
+    ['https://www.instagram.com/ava.rose/p/C9xAb12Cd/', true], ['https://www.instagram.com/p/C9xAb12Cd#top', true],
+    ['https://www.instagram.com/p/C9xAb12CdX/', false], ['https://www.instagram.com/p/xC9xAb12Cd/', false], ['https://www.instagram.com/', false]])
+    assert.equal(!!p(meta('5 likes, 1 comment - ava.rose on May 1, 2025: &quot;Mine&quot;', `<meta property="og:url" content="${url}">`), 'C9xAb12Cd'), ok, url);
   for (const bad of ['', null, '<html><title>Login • Instagram</title></html>',
     meta('Create an account or log in to Instagram - A simple, fun &amp; creative way to capture, edit &amp; share photos, videos &amp; messages with friends &amp; family.'),
     meta('1.204 curtidas, 56 comentários - ava.rose em 23 de julho de 2024: &quot;Oi&quot;'), meta('likes, comments - on'), '<meta property="og:description">'])
@@ -170,6 +176,36 @@ test('pasting a TikTok link fills title, views and likes but keeps typed values'
   assert.deepEqual(chips(L), ['✓ TikTok', '✓ Details from TikTok']);
   await logPost(L);
   assert.deepEqual(plain(logged(L).map(e => [e.p, e.title, e.views, e.ups, e.pid])), [['TikTok', 'Night fit check 🖤 #goth', 999, 3100, ID]]);
+  assert.deepEqual(L.errors, []);
+});
+
+test('re-pasting a logged post fills in its current numbers over the ones logged, never over numbers typed in', async t => {
+  const L = await open({ seed: {} }); t.after(() => L.close());
+  let page = fx('tiktok-page.html').replace('"45200"', '"12"').replace('"3100"', '"1"');
+  L.w.__lux.setFetcherForTests(async url => /oembed/.test(url) ? fx('tiktok-oembed.json') : page);
+  await L.go('#posts');
+  paste(L, VIDEO); await L.sleep(150);
+  assert.deepEqual(values(L), ['Night fit check 🖤 #goth', '12', '1']);
+  await logPost(L);
+  // A week later the page shows more: pasted again, the post is updated with its current numbers.
+  page = fx('tiktok-page.html');
+  paste(L, VIDEO); await L.sleep(150);
+  assert.equal(L.$('.logform button[type=submit]').textContent, 'Update post');
+  assert.deepEqual(values(L), ['Night fit check 🖤 #goth', '45200', '3100']);
+  assert.ok(chips(L).includes('✓ Details from TikTok'));
+  await logPost(L);
+  assert.deepEqual(plain(logged(L).map(e => [e.title, e.views, e.ups])), [['Night fit check 🖤 #goth', 45200, 3100]]);
+  // Views typed in while Lux looks it up stay; the likes Lux showed from the log are brought up to date.
+  const F = heldFetcher();
+  L.w.__lux.setFetcherForTests(F.fetch);
+  paste(L, VIDEO); await L.sleep(100);
+  assert.deepEqual(values(L), ['Night fit check 🖤 #goth', '45200', '3100']);
+  L.set(field(L, 'Views'), '50000', 'input');
+  F.answer(TT_OEMBED, fx('tiktok-oembed.json'));
+  F.answer(VIDEO, fx('tiktok-page.html').replace('"45200"', '"60000"').replace('"3100"', '"3200"')); await L.sleep(100);
+  assert.deepEqual(values(L), ['Night fit check 🖤 #goth', '50000', '3200']);
+  await logPost(L);
+  assert.deepEqual(plain(logged(L).map(e => [e.views, e.ups])), [[50000, 3200]]);
   assert.deepEqual(L.errors, []);
 });
 
@@ -304,7 +340,8 @@ test('a Reddit title looked up for one post never stays for the next, and a logg
   F.answer(oembed('def456'), null); await L.sleep(100);
   assert.equal(field(L, 'Post Title').value, '');
   assert.ok(chips(L).includes(FAILED));
-  // A post logged before: its numbers are shown for it, kept over a lookup, and go when the link changes.
+  // A post logged before: its numbers are shown for it, its title is kept over the one looked up, and both go when the
+  // link changes.
   L.set(field(L, 'Post Title'), 'Logged one', 'input');
   L.set(field(L, 'Views'), '300'); L.set(field(L, 'Likes/Upvotes'), '20');
   await logPost(L);
@@ -334,7 +371,7 @@ test('desktop: TikTok’s two pages are asked for together, each with its own fi
   assert.notEqual(a.config.output, b.config.output);
   const byUrl = Object.fromEntries(N.spawned.map(s => [s.config.url, s.config['user-agent']]));
   assert.deepEqual(byUrl, { [TT_OEMBED]: 'Mozilla/5.0', [VIDEO]: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' });
-  assert.ok(N.spawned.every(s => s.config['max-time'] === '8' && /^curl -K lux-lookup-\d+\.curl$/.test(s.command) && !s.command.includes('tiktok')));
+  assert.ok(N.spawned.every(s => s.config['max-time'] === '8' && /^curl -K lux-lookup-[0-9a-z]+\.curl$/.test(s.command) && !s.command.includes('tiktok')));
   held.get(VIDEO)({ code: 0, body: fx('tiktok-page.html') });
   held.get(TT_OEMBED)({ code: 0, body: fx('tiktok-oembed.json') });
   await L.sleep(300);

@@ -1773,27 +1773,34 @@ function readPostInput(text){
 // The only addresses Lux ever asks for: the platforms' https pages, without any character that could change a curl
 // config line or a command (no space, quote, %, &, # or backslash).
 const LOOKUP_URL_RE = /^https:\/\/www\.(reddit|tiktok|instagram)\.com\/[A-Za-z0-9._~\/?=:@-]*$/;
-let lookupFetcher = null, lookupFiles = 0, lookupDirReady = null;
+let lookupFetcher = null, lookupDirReady = null;
 // Windows and macOS both come with curl. On unless turned off in Settings on this computer; never in the web version.
 const lookupEnabled = () => DESK && !!S.desk && S.desk.cfg.lookup !== false;
 // Downloads one public page with curl, signed out, as text. null on any failure: no curl, offline, blocked, an HTTP
 // error, too slow (8 seconds), too big (5 MB) or empty. The address goes only into a config file, never on a command
-// line, and each download has its own files in the program's "lookup" folder, removed afterwards.
+// line, and each download has its own files in the program's "lookup" folder (named uniquely, so two Lux windows on one
+// computer never share them), removed afterwards.
 async function fetchText(url){
   if (lookupFetcher){ try { return await lookupFetcher(url); } catch { return null; } }
   if (!lookupEnabled() || !LOOKUP_URL_RE.test(url)) return null;
-  const FSx = Neutralino.filesystem, dir = S.desk.appDir + '/lookup', n = 'lux-lookup-' + (++lookupFiles);
-  // Once a session, before any download: the folder exists, and files left by a Lux closed mid-lookup are removed.
+  const FSx = Neutralino.filesystem, dir = S.desk.appDir + '/lookup', n = 'lux-lookup-' + newId();
+  // Once a session, before any download: the folder exists, and files left by a Lux closed mid-lookup are removed. Only
+  // files older than two minutes, so never those of a lookup another Lux window is running.
   lookupDirReady = lookupDirReady || (async () => {
     await fsMkdirp(dir);
-    try { for (const f of await FSx.readDirectory(dir)) if (/^lux-lookup-\d+\.(curl|out)$/.test(f.entry)){ try { await FSx.remove(dir + '/' + f.entry); } catch {} } } catch {}
+    try {
+      for (const f of await FSx.readDirectory(dir)){
+        if (!/^lux-lookup-[0-9a-z]+\.(curl|out)$/.test(f.entry)) continue;
+        try { const st = await FSx.getStats(dir + '/' + f.entry); if (Date.now() - st.modifiedAt > 120000) await FSx.remove(dir + '/' + f.entry); } catch {}
+      }
+    } catch {}
   })();
   // The user agents of the manual check in docs/lookup-spike.md. English pages, so the numbers read the same everywhere.
   const ua = /\/oembed\?/.test(url) ? 'Mozilla/5.0' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
-  const cfg = ['url = ' + curlQuote(url), 'output = ' + curlQuote(n + '.out'), 'user-agent = ' + curlQuote(ua),
-    'header = ' + curlQuote('Accept-Language: en-US,en;q=0.9'), 'silent', 'fail', 'globoff', 'location', 'max-redirs = 5',
-    'proto-redir = "=https"', 'connect-timeout = 5', 'max-time = 8', 'max-filesize = 5242880'];
   try {
+    const cfg = ['url = ' + curlQuote(url), 'output = ' + curlQuote(n + '.out'), 'user-agent = ' + curlQuote(ua),
+      'header = ' + curlQuote('Accept-Language: en-US,en;q=0.9'), 'silent', 'fail', 'globoff', 'location', 'max-redirs = 5',
+      'proto-redir = "=https"', 'connect-timeout = 5', 'max-time = 8', 'max-filesize = 5242880'];
     await lookupDirReady;
     await FSx.writeFile(dir + '/' + n + '.curl', cfg.join('\n') + '\n');
     if (await spawnWait('curl -K ' + n + '.curl', winPath(dir), 15000) !== 0) return null;
@@ -1845,7 +1852,7 @@ function parseInstagramPage(html, code){
     const k = String(a.property || a.name || '').toLowerCase();
     if (k && a.content != null && !(k in meta)) meta[k] = htmlUnescape(a.content).trim();
   }
-  if (code && meta['og:url'] && !meta['og:url'].includes('/' + code + '/')) return null;
+  if (code && meta['og:url'] && !new RegExp('/' + String(code).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:[/?#]|$)').test(meta['og:url'])) return null;
   const m = (meta['og:description'] || meta.description || '').match(/^([\d.,]+[KkMm]?)\s+likes?,\s*[\d.,]+[KkMm]?\s+comments?\s+-\s+[\s\S]+?\s+on\s+[^:]+?(?::\s*([\s\S]*))?$/);
   if (!m) return null;
   const ups = /^(\d{1,3}(,\d{3})*|\d+)$/.test(m[1]) ? statNum(m[1]) : null;
@@ -2112,8 +2119,11 @@ VIEWS.posts = {
       put(found, items);
     };
     const blank = el => el.value === '' && !(el.validity && el.validity.badInput);
-    // On the desktop app: fills in what the post's public page says, only in fields still empty (or holding the title
-    // Lux took from the link), never over what was typed. Logging never waits for it; a failure only asks to type it in.
+    // A number box Lux may fill: empty, or still holding what Lux put there (the numbers of the post as logged before),
+    // so the post's current numbers replace those. Never one typed in.
+    const ours = el => blank(el) || (filled.has(el) && filled.get(el) === el.value);
+    // On the desktop app: fills in what the post's public page says, only in fields still empty or holding what Lux put
+    // there, never over what was typed. Logging never waits for it; a failure only asks to type it in.
     const lookUp = async (r, seq) => {
       const k = postKey(r);
       if (k !== lookKey){ lookKey = k; lookP = queueLookup(r); }
@@ -2124,13 +2134,15 @@ VIEWS.posts = {
       r.looking = false;
       if (got){
         if (got.title && (!title.value.trim() || title.value === autoTitle)){ fillIn(title, got.title); autoTitle = got.title; }
-        if (got.views != null && blank(views)) fillIn(views, got.views);
-        if (got.ups != null && blank(ups)) fillIn(ups, got.ups);
+        if (got.views != null && ours(views)) fillIn(views, got.views);
+        if (got.ups != null && ours(ups)) fillIn(ups, got.ups);
         r.looked = got;
       } else r.lookupFailed = true;
       showFound(r);
     };
-    const applyLink = async () => {
+    // Typing (as opposed to pasting, dropping or picking a suggestion): a half-typed link can be a link to another post.
+    const typing = e => !!(e && /^(insertText|insertComposition|delete)/.test(e.inputType || ''));
+    const applyLink = async e => {
       const seq = ++linkSeq;
       const raw = link.value.trim();
       const r = raw ? readPostInput(raw) : null;
@@ -2158,10 +2170,15 @@ VIEWS.posts = {
       } else lookKey = '';
       submitBtn.textContent = dup ? t('Update post') : t('Log post');
       showFound(r);
-      if (cur && (lookupEnabled() || lookupFetcher) && lookupRequests(cur)) lookUp(cur, seq);
+      // A link typed by hand is looked up once typing has stopped for 400 ms; a pasted one, or one already looked up, at once.
+      if (cur && (lookupEnabled() || lookupFetcher) && lookupRequests(cur)){
+        const r0 = cur;
+        if (typing(e) && postKey(r0) !== lookKey) setTimeout(() => { if (seq === linkSeq) lookUp(r0, seq); }, 400);
+        else lookUp(r0, seq);
+      }
     };
     link.addEventListener('input', applyLink);
-    link.addEventListener('paste', () => setTimeout(applyLink, 0));
+    link.addEventListener('paste', () => setTimeout(() => applyLink(), 0));
     model.addEventListener('change', () => { u.model = model.value; confirmedBanned = ''; drawSelects(); });
     poster.addEventListener('change', () => { u.poster = poster.value; u.posterManual = true; });
     account.addEventListener('change', () => {
@@ -3131,7 +3148,8 @@ async function saveFile(name, content){
       toast(t('Saved {n}', {n:name})); return true;
     } catch (e) {}
   }
-  await textModal(name, content);
+  // Shown as text to copy: without the UTF-8 marker, which is only there for Excel opening a file.
+  await textModal(name, typeof content === 'string' ? content.replace(/^\uFEFF/, '') : content);
   return true;
 }
 function csvCell(v){ const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
@@ -4276,8 +4294,14 @@ function spawnWait(command, cwd, ms){
     Neutralino.os.spawnProcess(command, {cwd}).then(p => { id = p.id; if (id in early) finish(null, early[id]); }, err => finish(err));
   });
 }
-// A value in a curl config file: in double quotes, with backslashes and quotes escaped.
-const curlQuote = s => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+// A value in a curl config file: in double quotes, with backslashes and quotes escaped. A line break or any other
+// control character could start another setting, so a value holding one is refused (it throws).
+const curlQuote = s => {
+  const v = String(s);
+  if (/[\0-\x1f\x7f]/.test(v)) throw new Error('A curl setting cannot hold a line break or another control character');
+  return '"' + v.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+};
+Object.assign(LUX_TEST, {curlQuote});
 // Downloads a URL into versions/download/lux-dl.part with curl, which comes with Windows 10 and later and with macOS.
 // Returns the HTTP status and, for a redirect, where it points. Throws when curl could not run or connect.
 async function curlGet(url, headers, follow, seconds){
