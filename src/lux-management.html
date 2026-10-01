@@ -1780,13 +1780,13 @@ const lookupEnabled = () => DESK && !!S.desk && S.desk.cfg.lookup !== false;
 // error, too slow (8 seconds), too big (5 MB) or empty. The address goes only into a config file, never on a command
 // line, and each download has its own files in the program's "lookup" folder, removed afterwards.
 async function fetchText(url){
-  if (lookupFetcher){ try { return await lookupFetcher(url); } catch (e){ return null; } }
+  if (lookupFetcher){ try { return await lookupFetcher(url); } catch { return null; } }
   if (!lookupEnabled() || !LOOKUP_URL_RE.test(url)) return null;
   const FSx = Neutralino.filesystem, dir = S.desk.appDir + '/lookup', n = 'lux-lookup-' + (++lookupFiles);
   // Once a session, before any download: the folder exists, and files left by a Lux closed mid-lookup are removed.
   lookupDirReady = lookupDirReady || (async () => {
     await fsMkdirp(dir);
-    try { for (const f of await FSx.readDirectory(dir)) if (/^lux-lookup-\d+\.(curl|out)$/.test(f.entry)){ try { await FSx.remove(dir + '/' + f.entry); } catch (e) {} } } catch (e) {}
+    try { for (const f of await FSx.readDirectory(dir)) if (/^lux-lookup-\d+\.(curl|out)$/.test(f.entry)){ try { await FSx.remove(dir + '/' + f.entry); } catch {} } } catch {}
   })();
   // The user agents of the manual check in docs/lookup-spike.md. English pages, so the numbers read the same everywhere.
   const ua = /\/oembed\?/.test(url) ? 'Mozilla/5.0' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
@@ -1799,8 +1799,8 @@ async function fetchText(url){
     if (await spawnWait('curl -K ' + n + '.curl', winPath(dir), 15000) !== 0) return null;
     const text = new TextDecoder().decode(await FSx.readBinaryFile(dir + '/' + n + '.out'));
     return text.trim() ? text : null;
-  } catch (e){ return null; }
-  finally { for (const f of [n + '.curl', n + '.out']){ try { await FSx.remove(dir + '/' + f); } catch (e) {} } }
+  } catch { return null; }
+  finally { for (const f of [n + '.curl', n + '.out']){ try { await FSx.remove(dir + '/' + f); } catch {} } }
 }
 // Text from a page or an API: &amp;, &quot;, &#39;, &#x2728; and the like become the characters they stand for.
 const htmlUnescape = s => String(s).replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|quot|apos|lt|gt|amp);/gi, (m, k) => {
@@ -1812,24 +1812,74 @@ const htmlUnescape = s => String(s).replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|quot|apo
 const lookupTitle = s => [...String(s == null ? '' : s).replace(/\s+/g, ' ').trim()].slice(0, 300).join('');
 function parseRedditOembed(text){
   try { const j = JSON.parse(text); const title = j && typeof j.title === 'string' ? lookupTitle(htmlUnescape(j.title)) : ''; return title ? {title} : null; }
-  catch (e){ return null; }
+  catch { return null; }
 }
-// The pages to download for a parsed post link, or null when there is nothing to look up for it (a comment, a post on a
-// profile, or a link without the subreddit).
+// TikTok's oEmbed answer has the video's caption as its title, the way Reddit's has the post's title.
+const parseTikTokOembed = parseRedditOembed;
+// The caption and exact numbers on TikTok's public video page, from the JSON in its __UNIVERSAL_DATA_FOR_REHYDRATION__
+// script. pid, when given, must be the video's own ID, so a page about another video is never read.
+function parseTikTokPage(html, pid){
+  const m = String(html || '').match(/<script[^>]*\bid=["']__UNIVERSAL_DATA_FOR_REHYDRATION__["'][^>]*>([\s\S]*?)<\/script>/);
+  if (!m) return null;
+  try {
+    const d = JSON.parse(m[1]);
+    const v = d && d.__DEFAULT_SCOPE__ && d.__DEFAULT_SCOPE__['webapp.video-detail'];
+    const it = v && v.itemInfo && v.itemInfo.itemStruct;
+    if (!it || typeof it !== 'object' || (pid && it.id != null && String(it.id) !== String(pid))) return null;
+    const s2 = it.statsV2 || {}, s1 = it.stats || {};
+    const pick = k => { const n = statNum(s2[k]); return n != null ? n : statNum(s1[k]); };
+    const views = pick('playCount'), ups = pick('diggCount');
+    if (views == null && ups == null) return null;
+    return {views, ups, title:typeof it.desc === 'string' ? lookupTitle(it.desc) : ''};
+  } catch { return null; }
+}
+// Likes and caption from Instagram's public post page, when it shows one signed out. Its description reads
+// '1,204 likes, 56 comments - ava.rose on July 23, 2024: "caption"'. Instagram never shows views signed out, and a
+// rounded count such as 12K is left out, since it isn't the real number. code, when given, must be the post's own code
+// in the page's address (og:url), so a page about another post is never read.
+function parseInstagramPage(html, code){
+  const meta = {};
+  for (const tag of String(html || '').match(/<meta\b[^>]*>/gi) || []){
+    const a = {};
+    for (const x of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) a[x[1].toLowerCase()] = x[2] != null ? x[2] : x[3];
+    const k = String(a.property || a.name || '').toLowerCase();
+    if (k && a.content != null && !(k in meta)) meta[k] = htmlUnescape(a.content).trim();
+  }
+  if (code && meta['og:url'] && !meta['og:url'].includes('/' + code + '/')) return null;
+  const m = (meta['og:description'] || meta.description || '').match(/^([\d.,]+[KkMm]?)\s+likes?,\s*[\d.,]+[KkMm]?\s+comments?\s+-\s+[\s\S]+?\s+on\s+[^:]+?(?::\s*([\s\S]*))?$/);
+  if (!m) return null;
+  const ups = /^(\d{1,3}(,\d{3})*|\d+)$/.test(m[1]) ? statNum(m[1]) : null;
+  const title = lookupTitle(String(m[2] || '').trim().replace(/^["“]/, '').replace(/["”]\.?$/, ''));
+  return ups == null && !title ? null : {ups, title};
+}
+// The pages to download for a parsed post link, or null when there is nothing to look up for it (a Reddit comment, a
+// post on a profile, a link without the subreddit, or a TikTok link without the username).
 function lookupRequests(r){
   if (!r || !r.ok || !r.pid) return null;
   if (r.p === 'Reddit' && /^r\/[A-Za-z0-9_]{2,40}$/.test(r.sub || '') && /^[a-z0-9]{3,12}$/.test(r.pid))
     return [`https://www.reddit.com/oembed?url=https://www.reddit.com/${r.sub}/comments/${r.pid}/`];
+  if (r.p === 'TikTok' && /^\d{15,22}$/.test(r.pid) && /^[\w.]{2,40}$/.test(r.author || '')){
+    const page = `https://www.tiktok.com/@${r.author}/${r.type === 'Slideshow' ? 'photo' : 'video'}/${r.pid}`;
+    return [`https://www.tiktok.com/oembed?url=${page}`, page];
+  }
+  if (r.p === 'Instagram' && /^[A-Za-z0-9_-]{5,60}$/.test(r.pid)) return [`https://www.instagram.com/p/${r.pid}/`];
   return null;
 }
 // {title?, views?, ups?, source} from the platform, or null when it can't be looked up or the platform refused.
+// TikTok's two pages (oEmbed for the caption, the video page for the numbers) are asked for together; each is optional.
 async function lookupPostDetails(r){
   try {
     const urls = lookupRequests(r);
     if (!urls) return null;
     const texts = await Promise.all(urls.map(u => fetchText(u)));
     if (r.p === 'Reddit'){ const got = parseRedditOembed(texts[0] || ''); return got ? {title:got.title, source:'Reddit'} : null; }
-  } catch (e) {}
+    if (r.p === 'TikTok'){
+      const o = parseTikTokOembed(texts[0] || ''), pg = parseTikTokPage(texts[1] || '', r.pid);
+      if (!o && !pg) return null;
+      return {title:(o && o.title) || (pg && pg.title) || '', views:pg ? pg.views : null, ups:pg ? pg.ups : null, source:'TikTok'};
+    }
+    if (r.p === 'Instagram'){ const pg = parseInstagramPage(texts[0] || '', r.pid); return pg ? {title:pg.title, ups:pg.ups, source:'Instagram'} : null; }
+  } catch {}
   return null;
 }
 // One lookup at a time. A link still waiting for its turn is dropped (answered null) when a newer one comes, since only
@@ -1846,12 +1896,13 @@ async function runLookups(){
   if (lookupBusy || !lookupNext) return;
   const job = lookupNext; lookupNext = null; lookupBusy = true;
   let got = null;
-  try { got = await lookupPostDetails(job.r); } catch (e) {}
+  try { got = await lookupPostDetails(job.r); } catch {}
   lookupBusy = false;
   job.resolve(got);
   runLookups();
 }
 Object.assign(LUX_TEST, {LOOKUP_URL_RE, lookupEnabled, fetchText, parseRedditOembed, lookupPostDetails, setFetcherForTests:fn => { lookupFetcher = fn; }});
+Object.assign(LUX_TEST, {parseTikTokOembed, parseTikTokPage, parseInstagramPage});
 const upsLabel = p => p === 'Reddit' ? t('Upvotes') : t('Likes');
 const fmtCompact = n => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'K' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n);
 const hasStats = e => e.views != null || e.ups != null;
@@ -1999,6 +2050,13 @@ VIEWS.posts = {
     // in the form or a post already logged, is dropped. lookKey and lookP: the post last looked up online and its answer,
     // so pasting the same link again asks nothing new.
     let linkSeq = 0, lookKey = '', lookP = null;
+    // filled: the title, views and likes Lux put in for the post now in the link (shownKey), from the link, an earlier
+    // entry or a lookup. When the link changes to another post, or none, the ones not typed over since are emptied.
+    let shownKey = '';
+    const filled = new Map();
+    const fillIn = (el, v) => { el.value = v; filled.set(el, el.value); };
+    const forget = () => { for (const [el, v] of filled) if (el.value === v) el.value = ''; filled.clear(); autoTitle = ''; };
+    const postKey = r => [r.p, r.pid, r.sub, r.author, r.type].join(' ');
     const drawSeg = () => { put(seg, PLATFORMS.map(p => h('button', {type:'button', role:'radio', 'aria-checked':String(u.platform === p), class:u.platform === p ? 'on' : '', onclick:() => { u.platform = p; u.type = POST_TYPES[p][0]; drawSeg(); drawSelects(); }}, p))); };
     const subsOf = m => m ? [...(m.nsfwSubs || []).map(x => ({n:x.n, k:'NSFW'})), ...(m.sfwSubs || []).map(x => ({n:x.n, k:'SFW'}))] : [];
     const checkSub = () => {
@@ -2057,7 +2115,7 @@ VIEWS.posts = {
     // On the desktop app: fills in what the post's public page says, only in fields still empty (or holding the title
     // Lux took from the link), never over what was typed. Logging never waits for it; a failure only asks to type it in.
     const lookUp = async (r, seq) => {
-      const k = [r.p, r.pid, r.sub, r.author, r.type].join(' ');
+      const k = postKey(r);
       if (k !== lookKey){ lookKey = k; lookP = queueLookup(r); }
       const answer = lookP;
       r.looking = true; showFound(r);
@@ -2065,9 +2123,9 @@ VIEWS.posts = {
       if (seq !== linkSeq) return;
       r.looking = false;
       if (got){
-        if (got.title && (!title.value.trim() || title.value === autoTitle)){ title.value = got.title; autoTitle = got.title; }
-        if (got.views != null && blank(views)) views.value = got.views;
-        if (got.ups != null && blank(ups)) ups.value = got.ups;
+        if (got.title && (!title.value.trim() || title.value === autoTitle)){ fillIn(title, got.title); autoTitle = got.title; }
+        if (got.views != null && blank(views)) fillIn(views, got.views);
+        if (got.ups != null && blank(ups)) fillIn(ups, got.ups);
         r.looked = got;
       } else r.lookupFailed = true;
       showFound(r);
@@ -2077,6 +2135,8 @@ VIEWS.posts = {
       const raw = link.value.trim();
       const r = raw ? readPostInput(raw) : null;
       cur = r && r.ok ? r : null; dup = null;
+      const key = cur ? postKey(cur) : '';
+      if (key !== shownKey){ forget(); shownKey = key; }
       if (cur){
         if (cur.p !== u.platform){ u.platform = cur.p; drawSeg(); }
         const ac = findAccountFor(cur.p, cur.author);
@@ -2084,16 +2144,16 @@ VIEWS.posts = {
         if (POST_TYPES[cur.p].includes(cur.type)) u.type = cur.type;
         drawSelects();
         if (cur.p === 'Reddit' && cur.sub) sub.value = cur.sub;
-        if (cur.title && (!title.value.trim() || title.value === autoTitle)){ title.value = cur.title; autoTitle = cur.title; }
+        if (cur.title && (!title.value.trim() || title.value === autoTitle)){ fillIn(title, cur.title); autoTitle = cur.title; }
         checkSub();
         showFound(cur);
         const d = await findLoggedPost(cur.p, cur.pid);
         if (seq !== linkSeq) return;
         dup = d;
         if (dup){
-          if (!title.value.trim() && entryTitle(dup)) title.value = entryTitle(dup);
-          if (views.value === '' && dup.views != null) views.value = dup.views;
-          if (ups.value === '' && dup.ups != null) ups.value = dup.ups;
+          if (!title.value.trim() && entryTitle(dup)) fillIn(title, entryTitle(dup));
+          if (views.value === '' && dup.views != null) fillIn(views, dup.views);
+          if (ups.value === '' && dup.ups != null) fillIn(ups, dup.ups);
         }
       } else lookKey = '';
       submitBtn.textContent = dup ? t('Update post') : t('Log post');
@@ -2116,7 +2176,7 @@ VIEWS.posts = {
     title.addEventListener('input', () => { if (title.value !== autoTitle) autoTitle = ''; });
     const reset = () => {
       link.value = ''; title.value = ''; qty.value = '1'; sub.value = ''; views.value = ''; ups.value = ''; time.value = '';
-      cur = null; dup = null; autoTitle = ''; confirmedNoSub = false; confirmedBanned = ''; linkSeq++; lookKey = ''; submitBtn.textContent = t('Log post'); put(found); checkSub();
+      cur = null; dup = null; autoTitle = ''; confirmedNoSub = false; confirmedBanned = ''; linkSeq++; lookKey = ''; shownKey = ''; filled.clear(); submitBtn.textContent = t('Log post'); put(found); checkSub();
     };
     const submit = async () => {
       const nv = statNum(views.value), nu = statNumSigned(ups.value);
