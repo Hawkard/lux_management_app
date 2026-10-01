@@ -1,0 +1,7 @@
+{
+  "name": "lux-management",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test --test-force-exit" },
+  "devDependencies": { "jsdom": "^24.1.0" }
+}
