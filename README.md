@@ -22,23 +22,25 @@ The internal workspace for Lux Management: models, team, accounts, subreddits, p
 ## Shipping an update
 
 1. **Change the program** in `src/lux-management.html` and raise the version in
-   `const APP_VERSION = '2.8.1';` (for example to `2.9.0`).
+   `const APP_VERSION = '2.9.0';` (for example to `2.10.0`).
 2. **Add release notes** to the top of `CHANGELOG.md`:
    ```
-   ## 2.9.0
+   ## 2.10.0
    EN: What changed, in one or two sentences.
    PT: O que mudou, em uma ou duas frases.
    ```
 3. **Commit and push** (GitHub Desktop: write a summary, **Commit to main**, then **Push origin**).
-4. **Publish a release** on GitHub: **Releases → Draft a new release → Choose a tag**, type `v2.9.0`
+4. **Publish a release** on GitHub: **Releases → Draft a new release → Choose a tag**, type `v2.10.0`
    (it must match the version), give it a title, then **Publish release**. Leave the description empty:
-   GitHub fills it in from the changelog, with download instructions. Pushing a tag `v2.9.0` does the same.
+   GitHub fills it in from the changelog, with download instructions. Pushing a tag `v2.10.0` does the same.
+   Or, without making a tag yourself: **Actions → Build release → Run workflow** on `main`, tick
+   **Publish the release**, then **Run workflow**. It builds, checks the Mac app and publishes `v<version>`.
 5. **Wait about five minutes.** GitHub builds everything on a Mac and attaches it to the release:
-   - `Lux-Management-Windows-2.9.0.zip`: full download for new Windows computers
-   - `Lux-Management-Mac-2.9.0.dmg`: full download for new Macs
-   - `Lux-Management-2.9.0.neu`: the update
-   - `lux-update-2.9.0.luxupdate`: the signed update (only with the signing key secret, see below)
-   - `lux-management-web-2.9.0.html`: the Claude web version
+   - `Lux-Management-Windows-2.10.0.zip`: full download for new Windows computers
+   - `Lux-Management-Mac-2.10.0.dmg`: full download for new Macs
+   - `Lux-Management-2.10.0.neu`: the update
+   - `lux-update-2.10.0.luxupdate`: the signed update (only with the signing key secret, see below)
+   - `lux-management-web-2.10.0.html`: the Claude web version
    - `SHA256SUMS.txt`: fingerprints to check the files
    If the build fails, the **Actions** tab shows why in plain words (for example, a version that doesn't match the tag).
 6. **The team gets it.** If the release has the signed `.luxupdate`, every Lux finds it on GitHub within
@@ -118,6 +120,15 @@ everything in the new Lux, so do it before anyone starts working in it.
 - The key in use since 2.8.1 is the definitive one. 2.8.0 trusted an earlier key, so a computer that still has
   2.8.0 can't install updates signed with this one: install the current version from the release instead.
 
+## Looking up post details online
+
+When a Reddit, TikTok or Instagram link is pasted in the Posting log, Lux asks that platform's public page for
+the post's title, views and likes: signed out, from that computer only, one request per pasted link. It never
+uses AdsPower, a browser or any account. Whatever a platform refuses (a login page, a block, no connection) is
+left for the person to type in, and typed values are never overwritten. Instagram never shows views to
+signed-out visitors. Each computer can turn it off in **Settings → Post lookup**. `docs/lookup-spike.md` has the
+commands to check, from a given network, which platforms answer.
+
 ## The Mac app
 
 - The app is not notarized by Apple, so the first time macOS asks to confirm it:
@@ -146,7 +157,16 @@ python3 scripts/build.py
 The files appear in `dist/`. To sign one yourself:
 
 ```
-node scripts/sign-update.mjs dist/Lux-Management-2.9.0.neu --key path/to/lux-update-signing-key.json
+node scripts/sign-update.mjs dist/Lux-Management-2.10.0.neu --key path/to/lux-update-signing-key.json
+```
+
+## Running the tests
+
+The tests load the program in a simulated browser (jsdom), so no desktop app is needed. They need Node.js 20 or newer:
+
+```
+npm install
+npm test
 ```
 
 ## Working with Claude

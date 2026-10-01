@@ -1,15 +1,21 @@
 name: Build release
 
 # Builds the Windows and Mac downloads (there is no Linux version) on one of GitHub's Macs.
-# Runs when a version tag like v2.8.0 is pushed, or a release with a new tag is published
+# Runs when a version tag like v2.9.0 is pushed, or a release with a new tag is published
 # on GitHub, and puts the files on that release (creating it if needed). Can also be
-# started by hand from the Actions tab to test a build; the files then stay with the run.
+# started by hand from the Actions tab: to test a build (the files then stay with the run),
+# or, with "Publish the release" ticked, to publish the release v<version> itself.
 on:
   push:
     tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the release v<version> from this branch (makes the tag too)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -97,3 +103,19 @@ jobs:
           else
             gh release create "$TAG" dist/* --verify-tag --title "Lux Management ${TAG#v}" --notes-file .tmp/release-notes.md
           fi
+
+      # Started by hand with "Publish the release" ticked: publishes v<version> (the version in
+      # src/lux-management.html) with these files, tagging the commit this run built. A release made
+      # this way doesn't start the build again.
+      - name: Publish the release (started by hand with "Publish the release" ticked)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r\"const APP_VERSION = '([0-9.]+)'\", open('src/lux-management.html', encoding='utf-8').read()).group(1))")
+          TAG="v$VERSION"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "There is already a release $TAG. Raise the version, or delete that release first."
+            exit 1
+          fi
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Lux Management $VERSION" --notes-file .tmp/release-notes.md
