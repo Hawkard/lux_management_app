@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { open } from './harness.mjs';
+import { open, fakeNeutralino } from './harness.mjs';
 
 const seed = {
   'models/m1': { name: 'Ava', status: 'Active', niche: ['Goth'], nsfwSubs: [], sfwSubs: [], platforms: ['Reddit'], employees: [] },
@@ -631,52 +631,6 @@ test('web version: a view-only person sees the colors but gets no color buttons,
   assert.deepEqual(L.errors, []);
 });
 
-// A stand-in for the desktop app's Neutralino: files in memory by path, and the events Lux listens to.
-// write() changes a file the way the sync of a shared data folder does; emit() fires an event such as watchFile.
-function fakeNeutralino(start){
-  const files = new Map(), dirs = new Set(), mtime = new Map(), handlers = {};
-  let clock = 1000;
-  const addDirs = p => { const a = p.split('/'); for (let i = 2; i < a.length; i++) dirs.add(a.slice(0, i).join('/')); };
-  const put = (p, text) => { addDirs(p); files.set(p, text); mtime.set(p, ++clock); };
-  for (const [p, v] of Object.entries(start)) put(p, typeof v === 'string' ? v : JSON.stringify(v));
-  const missing = () => Promise.reject({ code: 'NE_FS_NOPATHE', message: 'no such file or folder' });
-  const emit = (name, detail) => (handlers[name] || []).slice().forEach(fn => fn({ detail }));
-  return {
-    files, emit,
-    read: p => files.has(p) ? JSON.parse(files.get(p)) : undefined,
-    write: (p, v) => put(p, JSON.stringify(v)),
-    init: () => { setTimeout(() => emit('ready'), 0); },
-    events: {
-      on: async (name, fn) => { (handlers[name] = handlers[name] || []).push(fn); },
-      off: async (name, fn) => { handlers[name] = (handlers[name] || []).filter(x => x !== fn); }
-    },
-    filesystem: {
-      readFile: async p => files.has(p) ? files.get(p) : missing(),
-      readBinaryFile: async p => files.has(p) ? new TextEncoder().encode(files.get(p)).buffer : missing(),
-      writeFile: async (p, text) => put(p, String(text)),
-      writeBinaryFile: async (p, buf) => put(p, new TextDecoder().decode(buf)),
-      readDirectory: async p => {
-        if (!dirs.has(p)) return missing();
-        const names = new Set([...files.keys(), ...dirs].filter(x => x.startsWith(p + '/')).map(x => x.slice(p.length + 1).split('/')[0]));
-        return [...names].map(entry => ({ entry, type: dirs.has(p + '/' + entry) ? 'DIRECTORY' : 'FILE' }));
-      },
-      getStats: async p => files.has(p) ? { size: files.get(p).length, isFile: true, isDirectory: false, modifiedAt: mtime.get(p) }
-        : dirs.has(p) ? { size: 0, isFile: false, isDirectory: true, modifiedAt: 0 } : missing(),
-      createDirectory: async p => { addDirs(p); dirs.add(p); },
-      move: async (a, b) => { if (!files.has(a)) return missing(); put(b, files.get(a)); files.delete(a); },
-      copy: async (a, b) => { if (!files.has(a)) return missing(); put(b, files.get(a)); },
-      remove: async p => { if (files.has(p)) files.delete(p); else if (dirs.has(p)) dirs.delete(p); else return missing(); },
-      getAbsolutePath: async p => p,
-      createWatcher: async () => 1
-    },
-    os: {
-      open: async () => {}, showSaveDialog: async (title, o) => o && o.defaultPath, showOpenDialog: async () => [], showFolderDialog: async () => '',
-      spawnProcess: () => Promise.reject(new Error('no programs run in tests')), updateSpawnedProcess: async () => {}
-    },
-    app: { exit: async () => {}, restartProcess: async () => {} },
-    window: { setMainMenu: async () => {} }
-  };
-}
 const DATA = '/app/data';
 // A desktop app whose data folder holds these documents, used by Ana (u1).
 const desk = (docs, more = {}) => fakeNeutralino(Object.assign({
