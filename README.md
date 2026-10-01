@@ -123,7 +123,8 @@ everything in the new Lux, so do it before anyone starts working in it.
 ## Looking up post details online
 
 When a Reddit, TikTok or Instagram link is pasted in the Posting log, Lux asks that platform's public page for
-the post's title, views and likes: signed out, from that computer only, one request per pasted link. It never
+the post's title, views and likes: signed out, from that computer only, one lookup per pasted link (two
+requests for TikTok). It never
 uses AdsPower, a browser or any account. Whatever a platform refuses (a login page, a block, no connection) is
 left for the person to type in, and typed values are never overwritten. Instagram never shows views to
 signed-out visitors. Each computer can turn it off in **Settings → Post lookup**. `docs/lookup-spike.md` has the
@@ -162,7 +163,7 @@ node scripts/sign-update.mjs dist/Lux-Management-2.10.0.neu --key path/to/lux-up
 
 ## Running the tests
 
-The tests load the program in a simulated browser (jsdom), so no desktop app is needed. They need Node.js 20 or newer:
+The tests load the program in a simulated browser (jsdom), so no desktop app is needed. They need Node.js 20.14 or newer:
 
 ```
 npm install

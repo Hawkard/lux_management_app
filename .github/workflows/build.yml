@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the release v<version> from this branch (makes the tag too)
+        description: Publish the release v<version> (from main only; makes the tag too)
         type: boolean
         default: false
 
@@ -112,6 +112,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "Releases are published from main only. Start this from main."
+            exit 1
+          fi
+          if ! ls dist/lux-update-*.luxupdate > /dev/null 2>&1; then
+            echo "No signed update (.luxupdate) was made, so no Lux could install this release by itself. Add the LUX_SIGNING_KEY secret, then run this again."
+            exit 1
+          fi
           VERSION=$(python3 -c "import re; print(re.search(r\"const APP_VERSION = '([0-9.]+)'\", open('src/lux-management.html', encoding='utf-8').read()).group(1))")
           TAG="v$VERSION"
           if gh release view "$TAG" > /dev/null 2>&1; then
