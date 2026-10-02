@@ -6,8 +6,11 @@ export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // claude: optional stand-in for the Claude artifact runtime (window.claude), to run the web version.
 // neutralino: optional stand-in for Neutralino (window.Neutralino), to run the desktop version with its program
-// folder at /app (so its data folder is /app/data unless the settings file says otherwise).
-export async function open({ seed = {}, lang, claude, neutralino } = {}) {
+// folder at /app (so its data folder is /app/data unless the settings file says otherwise), on the system os
+// ('Linux', 'Windows' or 'Darwin' for a Mac).
+// screen: optional part of the screen a window can use ({availLeft, availTop, availWidth, availHeight} in CSS pixels;
+// jsdom's are all 0), and dpr the screen's scale (window.devicePixelRatio, 1.5 for a Windows screen at 150%).
+export async function open({ seed = {}, lang, claude, neutralino, os = 'Linux', screen, dpr } = {}) {
   const html = readFileSync(SRC, 'utf8');
   const errors = [];
   const dom = new JSDOM(html, {
@@ -18,7 +21,9 @@ export async function open({ seed = {}, lang, claude, neutralino } = {}) {
       if (lang) w.localStorage.setItem('lux-lang', lang);
       if (claude) w.claude = claude;
       // The desktop app's WebView has TextDecoder and TextEncoder; jsdom's window does not.
-      if (neutralino){ w.NL_OS = 'Linux'; w.NL_PATH = '/app'; w.Neutralino = neutralino; w.TextDecoder = TextDecoder; w.TextEncoder = TextEncoder; }
+      if (neutralino){ w.NL_OS = os; w.NL_PATH = '/app'; w.Neutralino = neutralino; w.TextDecoder = TextDecoder; w.TextEncoder = TextEncoder; }
+      for (const [k, v] of Object.entries(screen || {})) Object.defineProperty(w.screen, k, { value: v, configurable: true });
+      if (dpr) Object.defineProperty(w, 'devicePixelRatio', { value: dpr, configurable: true });
     }
   });
   const w = dom.window;
@@ -44,7 +49,10 @@ export async function open({ seed = {}, lang, claude, neutralino } = {}) {
 // written to the config's output file. It can be changed later (N.curl = ...); without it no program runs. Every program
 // started is recorded in spawned ({id, command, cwd, config, text}), and every one stopped in killed.
 // mtime holds each file's modification time in milliseconds, like Neutralino's getStats; a test may set it.
-export function fakeNeutralino(start, { curl } = {}){
+// win: how the window starts (size and position in Neutralino's units, maximized, minimized, fullScreen); win.fail makes
+// every window call fail, as when it is not allowed. winCalls lists every change Lux makes to the window, and exited
+// counts the times Lux closed itself.
+export function fakeNeutralino(start, { curl, win: winStart } = {}){
   const files = new Map(), dirs = new Set(), mtime = new Map(), handlers = {};
   const spawned = [], killed = [];
   let clock = Date.now(), pids = 0;
@@ -54,8 +62,11 @@ export function fakeNeutralino(start, { curl } = {}){
   for (const [p, v] of Object.entries(start)) put(p, typeof v === 'string' ? v : JSON.stringify(v));
   const missing = () => Promise.reject({ code: 'NE_FS_NOPATHE', message: 'no such file or folder' });
   const emit = (name, detail) => (handlers[name] || []).slice().forEach(fn => fn({ detail }));
+  const win = Object.assign({ width: 1320, height: 860, x: 300, y: 110, maximized: false, minimized: false, fullScreen: false, fail: false }, winStart);
+  const winCalls = [];
+  const winApi = fn => async (...a) => { if (win.fail) throw { code: 'NE_RT_NATPRME', message: 'not allowed' }; return fn(...a); };
   const N = {
-    files, mtime, emit, curl, spawned, killed,
+    files, mtime, emit, curl, spawned, killed, win, winCalls, exited: 0,
     read: p => files.has(p) ? JSON.parse(files.get(p)) : undefined,
     write: (p, v) => put(p, JSON.stringify(v)),
     init: () => { setTimeout(() => emit('ready'), 0); },
@@ -99,8 +110,18 @@ export function fakeNeutralino(start, { curl } = {}){
       },
       updateSpawnedProcess: async (id, action) => { if (action === 'exit') killed.push(id); }
     },
-    app: { exit: async () => {}, restartProcess: async () => {} },
-    window: { setMainMenu: async () => {} }
+    app: { exit: async () => { N.exited++; }, restartProcess: async () => {} },
+    window: {
+      setMainMenu: async () => {},
+      getSize: winApi(() => ({ width: win.width, height: win.height, minWidth: 480, minHeight: 560, maxWidth: -1, maxHeight: -1, resizable: true })),
+      setSize: winApi(o => { winCalls.push(['setSize', o.width, o.height]); win.width = o.width; win.height = o.height; }),
+      getPosition: winApi(() => ({ x: win.x, y: win.y })),
+      move: winApi((x, y) => { winCalls.push(['move', x, y]); win.x = x; win.y = y; }),
+      isMaximized: winApi(() => win.maximized),
+      maximize: winApi(() => { winCalls.push(['maximize']); win.maximized = true; }),
+      isMinimized: winApi(() => win.minimized),
+      isFullScreen: winApi(() => win.fullScreen)
+    }
   };
   return N;
 }

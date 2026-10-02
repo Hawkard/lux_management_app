@@ -75,6 +75,10 @@ again.
   Your data is never changed by switching versions.
 - If Lux won't open at all: close it, then double-click "Recover Lux.bat" in
   the program folder, type the number of a version and press Enter.
+- If Lux is open but its window can't be seen (up to version 2.9.0): end
+  "LuxManagement.exe" in Task Manager (Ctrl+Shift+Esc), delete the file
+  window_state.config.json in the .tmp folder inside the program folder, and
+  open Lux again. Since 2.9.1 the window always opens in the middle of the screen.
 - Publishing an update (owner only): new versions are published on GitHub (see
   the README in the repository). To send one through the shared data folder
   instead: you receive a new resources.neu (or a .neu file). Open
@@ -176,6 +180,10 @@ não avisa de novo.
 - Se o Lux não abrir de jeito nenhum: feche-o, clique duas vezes em
   "Recover Lux.bat" na pasta do programa, digite o número de uma versão e
   pressione Enter.
+- Se o Lux está aberto mas a janela não aparece (até a versão 2.9.0): finalize
+  o "LuxManagement.exe" no Gerenciador de Tarefas (Ctrl+Shift+Esc), apague o
+  arquivo window_state.config.json da pasta .tmp dentro da pasta do programa e
+  abra o Lux de novo. Desde a 2.9.1 a janela sempre abre no meio da tela.
 - Publicar uma atualização (só o dono): as versões novas são publicadas no
   GitHub (veja o README do repositório). Para enviar uma pela pasta de dados
   compartilhada: você recebe um novo resources.neu (ou um arquivo .neu). Abra

@@ -376,7 +376,7 @@ function t(s, vars){
 }
 const LOC = () => LANG === 'pt' ? 'pt-BR' : undefined;
 const DESK = typeof window.Neutralino !== 'undefined' && !!window.NL_OS;
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.9.1';
 const LUX_TEST = {};
 if (location.hostname === 'lux.test') window.__lux = LUX_TEST;
 function setLang(l){
@@ -3963,8 +3963,61 @@ function chooseUser(prevUid){
 }
 async function quitApp(){
   try { await S.store.flush(); await auditChain; await S.store.flush(); } catch (e) {}
+  await Promise.race([rememberWindow(), sleep(1500)]);
   Neutralino.app.exit();
 }
+/* The window. Up to 2.9.0, Neutralino put it back exactly where it was when Lux closed, without checking that the spot
+   is still on a screen (a second screen that was unplugged, a window dragged or resized out of view), so it could open
+   out of sight every time. Lux now keeps only its size and whether it was maximized (in the settings file), and opens it
+   in the middle of the screen, never bigger than the screen. */
+const OLD_WINDOW_FILE = '/.tmp/window_state.config.json';
+// Neutralino measures the window in screen pixels on Windows and in points on a Mac. The page measures in CSS pixels,
+// which are bigger on a scaled Windows screen (at 150%, one CSS pixel is 1.5 screen pixels).
+const winUnit = () => IS_MAC() ? 1 : (window.devicePixelRatio > 0 ? window.devicePixelRatio : 1);
+// The part of the screen a window can use (without the taskbar, Dock or menu bar), in Neutralino's units.
+function screenArea(){
+  const sc = window.screen || {}, k = winUnit();
+  const a = {x:Math.round((sc.availLeft || 0) * k), y:Math.round((sc.availTop || 0) * k), w:Math.floor((sc.availWidth || 0) * k), h:Math.floor((sc.availHeight || 0) * k)};
+  return a.w >= 320 && a.h >= 240 ? a : null;
+}
+// Where the window goes: the saved size (or the size it has), never smaller than the window's minimum nor bigger than
+// the area, in the middle of the area. null when the window already has that size and is inside the area.
+function windowFit(size, pos, saved, area){
+  const pick = (v, now, min, max) => Math.round(Math.min(Math.max(Number.isFinite(v) && v >= 100 ? v : now, min > 0 ? min : 0), max));
+  const w = pick(saved && saved.width, size.width, size.minWidth, area.w);
+  const ht = pick(saved && saved.height, size.height, size.minHeight, area.h);
+  const inside = pos.x >= area.x && pos.y >= area.y && pos.x + w <= area.x + area.w && pos.y + ht <= area.y + area.h;
+  if (w === size.width && ht === size.height && inside) return null;
+  return {width:w, height:ht, x:area.x + Math.round((area.w - w) / 2), y:area.y + Math.round((area.h - ht) / 2)};
+}
+const keptWindow = () => { const v = S.desk.cfg.window; return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+async function placeWindow(){
+  const W = Neutralino.window, saved = keptWindow();
+  try { await Neutralino.filesystem.remove(S.desk.appDir + OLD_WINDOW_FILE); } catch (e) {}
+  try {
+    const area = screenArea(), size = await W.getSize();
+    const fit = area && windowFit(size, await W.getPosition(), saved, area);
+    // On a Mac, setting the size also centers the window on its screen, below the menu bar.
+    if (fit && IS_MAC()) await W.setSize({width:fit.width, height:fit.height});
+    else if (fit){
+      if (fit.width !== size.width || fit.height !== size.height) await W.setSize({width:fit.width, height:fit.height});
+      await W.move(fit.x, fit.y);
+    }
+    if (saved.maximized === true) await W.maximize();
+  } catch (e){ console.warn('window', e); }
+}
+// Keeps the window's size, and whether it is maximized, for the next time Lux opens. A minimized or full-screen window
+// keeps what was kept before.
+async function rememberWindow(){
+  const W = Neutralino.window;
+  try {
+    if (await W.isMinimized() || await W.isFullScreen()) return;
+    if (await W.isMaximized()){ const k = keptWindow(); await saveConfig({window:{width:k.width, height:k.height, maximized:true}}); return; }
+    const s = await W.getSize();
+    if (s.width >= 100 && s.height >= 100) await saveConfig({window:{width:s.width, height:s.height, maximized:false}});
+  } catch (e) {}
+}
+Object.assign(LUX_TEST, {screenArea, windowFit});
 // A Mac app needs a menu bar: without the Edit menu, ⌘C, ⌘V and ⌘A do nothing in the window.
 function setMacMenu(){
   if (!DESK || !IS_MAC() || !(Neutralino.window && Neutralino.window.setMainMenu)) return;
@@ -3998,6 +4051,7 @@ async function bootDesktop(){
   appDir = appDir.replace(/(\/\.)+$/, '').replace(/\/+$/, '');
   const D = S.desk = {appDir, cfgFile:appDir + '/config/settings.json', backupDir:appDir + '/backups', exportDir:appDir + '/exports', cfg:{}};
   try { D.cfg = JSON.parse(await Neutralino.filesystem.readFile(D.cfgFile)) || {}; } catch (e){ D.cfg = {}; }
+  await Promise.race([placeWindow(), sleep(2000)]);
   D.dataDir = String(D.cfg.dataDir || appDir + '/data').replace(/\\/g, '/').replace(/\/+$/, '');
   await fsMkdirp(D.dataDir); await fsMkdirp(D.backupDir); await fsMkdirp(D.exportDir);
   if (D.cfg.lang && D.cfg.lang !== LANG){ LANG = D.cfg.lang === 'pt' ? 'pt' : 'en'; document.documentElement.lang = LANG === 'pt' ? 'pt-BR' : 'en'; renderView(); }
@@ -4100,6 +4154,7 @@ async function deskRestore(){
 async function deskRestart(){
   await S.store.flush();
   try { await auditChain; await S.store.flush(); } catch (e) {}
+  await Promise.race([rememberWindow(), sleep(1500)]);
   const fallback = setTimeout(() => toast(t('Close Lux and open it again to finish.'), true), 6000);
   try { await Neutralino.app.restartProcess(); } catch (e){ clearTimeout(fallback); toast(t('Close Lux and open it again to finish.'), true); }
 }

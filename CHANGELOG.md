@@ -4,6 +4,10 @@ Each release needs a `## x.y.z` heading with an `EN:` line and a `PT:` line.
 Those two lines become the notes people see in Lux's update bar, in their own language.
 The version must match `const APP_VERSION` in `src/lux-management.html`.
 
+## 2.9.1
+EN: Fixes the desktop window opening out of sight, every time, after it had been moved or resized off the screen or onto a screen that was later unplugged. The window now always opens in the middle of the screen, never bigger than the screen, keeping its size, or maximized if it was.
+PT: Corrige a janela do app de desktop abrindo fora da tela, toda vez, depois de ter sido movida ou redimensionada para fora da tela ou para uma tela que foi desconectada. Agora a janela sempre abre no meio da tela, nunca maior que a tela, com o tamanho que tinha, ou maximizada se estava.
+
 ## 2.9.0
 EN: Posting log: an All time range, and the post's title, views and likes looked up online for Reddit, TikTok and Instagram links where the platform allows it (Settings > Post lookup); titles keep emojis. Banned subreddits per model. Colors for tags and niches. Subreddits: numbers like 520k, a posting limit list and Karma Verification. Update every computer before using Karma Verification or banned subreddits: 2.8.1 clears them when it imports a backup or a CSV.
 PT: Registro de postagens: período Todo o período, e título, visualizações e curtidas do post buscados online para links do Reddit, TikTok e Instagram quando a plataforma permite (Configurações > Busca de posts); os títulos mantêm emojis. Subreddits banidos por modelo. Cores para tags e nichos. Subreddits: números como 520k, lista de limite de postagem e Verificação por karma. Atualize todos os computadores antes de usar Verificação por karma ou subreddits banidos: a 2.8.1 apaga esses dados ao importar um backup ou um CSV.
