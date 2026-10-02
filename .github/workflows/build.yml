@@ -3,8 +3,9 @@ name: Build release
 # Builds the Windows and Mac downloads (there is no Linux version) on one of GitHub's Macs.
 # Runs when a version tag like v2.9.0 is pushed, or a release with a new tag is published
 # on GitHub, and puts the files on that release (creating it if needed). Can also be
-# started by hand from the Actions tab: to test a build (the files then stay with the run),
-# or, with "Publish the release" ticked, to publish the release v<version> itself.
+# started by hand from the Actions tab: to test a build (the files then stay with the run,
+# and the Windows app is also opened on one of GitHub's Windows computers), or, with
+# "Publish the release" ticked, to publish the release v<version> itself.
 on:
   push:
     tags: ['v*']
@@ -50,22 +51,28 @@ jobs:
         run: python3 scripts/build.py
 
       # Opens the Mac app from the disk image and waits for Lux to start, so a Mac app
-      # that doesn't open is never published.
-      - name: Check that the Mac app opens
+      # that doesn't open is never published. It starts with a window kept bigger than the
+      # screen and Neutralino's old saved spot far off the screen (what made the window
+      # disappear up to 2.9.0), and the window must open inside the screen.
+      - name: Check that the Mac app opens, with its window on the screen
         run: |
           hdiutil attach dist/Lux-Management-Mac-*.dmg -nobrowse -mountpoint /tmp/luxcheck
           cp -R "/tmp/luxcheck/Lux Management.app" "$RUNNER_TEMP/"
           hdiutil detach /tmp/luxcheck
           codesign --verify --strict "$RUNNER_TEMP/Lux Management.app"
           H="$HOME/Library/Application Support/Lux Management"
-          mkdir -p "$H/config" "$H/data/people"
-          echo '{"userId":"u_check"}' > "$H/config/settings.json"
+          mkdir -p "$H/config" "$H/data/people" "$H/.tmp"
+          echo '{"userId":"u_check","window":{"width":5000,"height":4000,"maximized":false}}' > "$H/config/settings.json"
           echo '{"name":"Check","createdAt":1}' > "$H/data/people/u_check.json"
+          echo '{"x":6000,"y":4000,"width":1320,"height":860,"maximize":false,"minWidth":480,"minHeight":560,"maxWidth":-1,"maxHeight":-1,"resizable":true}' > "$H/.tmp/window_state.config.json"
           open "$RUNNER_TEMP/Lux Management.app"
           for i in $(seq 1 45); do [ -f "$H/versions/index.json" ] && break; sleep 2; done
-          pkill -x LuxManagement || true
-          test -f "$H/versions/index.json" || { echo "The Mac app did not open."; exit 1; }
+          test -f "$H/versions/index.json" || { pkill -x LuxManagement; echo "The Mac app did not open."; exit 1; }
           echo "The Mac app opened."
+          sleep 3
+          swift scripts/check-window.swift || { pkill -x LuxManagement; echo "The Lux window is not on the screen."; exit 1; }
+          pkill -x LuxManagement || true
+          test ! -f "$H/.tmp/window_state.config.json" || { echo "Neutralino's old window file was not removed."; exit 1; }
 
       # Optional. Only runs if you add a repository secret named LUX_SIGNING_KEY
       # (Settings > Secrets and variables > Actions). Lux then installs the update straight
@@ -127,3 +134,24 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Lux Management $VERSION" --notes-file .tmp/release-notes.md
+
+  # Test builds only (started by hand without "Publish the release"): opens the Windows app on
+  # one of GitHub's Windows computers and checks that its window opens on the screen.
+  windows-check:
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: lux-management-build
+          path: dist
+
+      - name: Check that the Windows app opens, with its window on the screen
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist -Filter 'Lux-Management-Windows-*.zip' | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\lux"
+          ./scripts/check-window.ps1 "$env:RUNNER_TEMP\lux\Lux Management"

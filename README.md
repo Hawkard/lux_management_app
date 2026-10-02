@@ -17,12 +17,13 @@ The internal workspace for Lux Management: models, team, accounts, subreddits, p
 | `scripts/build.py` | Builds the update file, the Windows and Mac downloads and the web version. |
 | `scripts/sign-update.mjs` | Signs an update so Lux installs it. |
 | `scripts/new-signing-key.mjs` | Makes a new signing key if the old one is lost or exposed. |
+| `scripts/check-window.swift`, `scripts/check-window.ps1` | Used by the GitHub build to check that the Mac and Windows apps open with their window on the screen. |
 | `.github/workflows/build.yml` | Builds everything on one of GitHub's Macs and puts it on the release. |
 
 ## Shipping an update
 
 1. **Change the program** in `src/lux-management.html` and raise the version in
-   `const APP_VERSION = '2.9.0';` (for example to `2.10.0`).
+   `const APP_VERSION = '2.9.1';` (for example to `2.10.0`).
 2. **Add release notes** to the top of `CHANGELOG.md`:
    ```
    ## 2.10.0
