@@ -28,6 +28,12 @@ test('Neutralino never puts the window back by itself, and allows every window c
   if (used.has('window.setSize')) assert.ok(cfg.nativeAllowList.includes('window.getSize'));
 });
 
+test('Lux knows the window’s starting size from the Neutralino settings', async t => {
+  const cfg = JSON.parse(readFileSync(new URL('../app/neutralino.config.json', import.meta.url), 'utf8'));
+  const L = await open(); t.after(() => L.close());
+  assert.deepEqual(plain(L.w.__lux.START_SIZE), { width: cfg.modes.window.width, height: cfg.modes.window.height });
+});
+
 test('windowFit leaves a window that fits, and brings back one that is too big or out of view', async t => {
   const L = await open(); t.after(() => L.close());
   const fit = (...a) => plain(L.w.__lux.windowFit(...a));
@@ -58,12 +64,12 @@ test('windowFit leaves a window that fits, and brings back one that is too big o
 
 test('screenArea is in screen pixels on Windows, whatever the page zoom, and in points on a Mac', async t => {
   // Where Neutralino has just put its 1320x860 window: in the middle of a 1920x1080 main screen (in screen pixels).
-  const size = { width: 1320, height: 860 }, centered = { x: 300, y: 110 };
+  const centered = { x: 300, y: 110 };
   // That screen at 150%, as the page sees it in CSS pixels, with a taskbar at the top.
   const scaled = { width: 1280, height: 720, availLeft: 0, availTop: 25, availWidth: 1280, availHeight: 672 };
   const area = async (os, dpr, sc, pos = centered) => {
     const L = await open({ neutralino: desk(), os, dpr, screen: sc });
-    try { return plain(L.w.__lux.screenArea(size, pos)); } finally { L.close(); }
+    try { return plain(L.w.__lux.screenArea(pos)); } finally { L.close(); }
   };
   // Windows at 150%: 1280 CSS pixels are 1920 screen pixels...
   assert.deepEqual(await area('Windows', 1.5, scaled), { x: 0, y: 38, w: 1920, h: 1008 });
@@ -75,6 +81,9 @@ test('screenArea is in screen pixels on Windows, whatever the page zoom, and in 
   assert.deepEqual(await area('Windows', 1, { width: 640, height: 400, availLeft: 0, availTop: 0, availWidth: 640, availHeight: 400 }), { x: 0, y: 0, w: 1920, h: 1080 });
   // No screen width to work from: devicePixelRatio it is.
   assert.deepEqual(await area('Windows', 1.5, { availLeft: 0, availTop: 0, availWidth: 1280, availHeight: 672 }), { x: 0, y: 0, w: 1920, h: 1008 });
+  // A 1024x768 screen, smaller than the starting size: Neutralino centers the window as if it were 1320x860, at
+  // (-148, -46), though Windows made it smaller.
+  assert.deepEqual(await area('Windows', 1, { width: 1024, height: 768, availLeft: 0, availTop: 0, availWidth: 1024, availHeight: 720 }, { x: -148, y: -46 }), { x: 0, y: 0, w: 1024, h: 720 });
   // A Mac: Neutralino and the page both count in points, whatever the Retina scale.
   assert.deepEqual(await area('Darwin', 2, scaled, { x: 60, y: 20 }), { x: 0, y: 25, w: 1280, h: 672 });
   // No usable size (jsdom's screen, or a broken one): no area, so the window is left alone.
@@ -156,6 +165,15 @@ test('desktop: closing Lux keeps the window size for next time, but not a minimi
   assert.deepEqual(kept(N), { width: 1500, height: 900, maximized: true });
   assert.equal(N.exited, 4);
   assert.deepEqual(L.errors, []);
+});
+
+test('desktop: a Windows screen smaller than the starting size gets a window as big as the screen allows', async t => {
+  // What GitHub's Windows computer showed: a 1024x768 screen with a 48-pixel taskbar. Neutralino centered the window
+  // as if it were 1320x860, at (-148, -46); Windows made it 1044x788, the most it allows there.
+  const N = desk({ window: { width: 5000, height: 4000, maximized: false } }, { x: -148, y: -46, width: 1044, height: 788 });
+  const L = await open({ neutralino: N, os: 'Windows', dpr: 1, screen: { width: 1024, height: 768, availLeft: 0, availTop: 0, availWidth: 1024, availHeight: 720 } });
+  t.after(() => L.close());
+  assert.deepEqual(N.winCalls, [['setSize', 1024, 720], ['move', 0, 0]]);
 });
 
 test('desktop: closing Lux writes only the window entry, into the settings as they are now, and only when it changed', async t => {

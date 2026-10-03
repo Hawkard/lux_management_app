@@ -70,7 +70,7 @@ jobs:
           test -f "$H/versions/index.json" || { pkill -x LuxManagement || true; echo "The Mac app did not open."; exit 1; }
           echo "The Mac app opened."
           sleep 3
-          swift scripts/check-window.swift || { pkill -x LuxManagement || true; echo "The Lux window is not on the screen."; exit 1; }
+          swift scripts/check-window.swift --fills || { pkill -x LuxManagement || true; echo "The Lux window is not on the screen."; exit 1; }
           pkill -x LuxManagement || true
           test ! -f "$H/.tmp/window_state.config.json" || { echo "Neutralino's old window file was not removed."; exit 1; }
 

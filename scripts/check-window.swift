@@ -1,6 +1,7 @@
 // Used by the GitHub build (.github/workflows/build.yml) on a Mac, while Lux is open: checks that the Lux window is
-// inside the part of the main screen a window can use (below the menu bar, above the Dock). Exits with 1 if it is
-// not, or if there is no Lux window.
+// inside the part of the main screen a window can use (below the menu bar, above the Dock), and with --fills that it
+// takes up all of it (when Lux was told to open bigger than the screen). Exits with 1 if not, or if there is no Lux
+// window.
 import AppKit
 
 _ = NSApplication.shared
@@ -17,4 +18,5 @@ let lux = windows.compactMap { w -> CGRect? in
 }.max { $0.width * $0.height < $1.width * $1.height }
 guard let window = lux else { print("No Lux window found"); exit(1) }
 print("Lux window: \(window), usable part of the screen: \(usable)")
-exit(usable.insetBy(dx: -2, dy: -2).contains(window) && window.width >= 400 && window.height >= 400 ? 0 : 1)
+let fills = !CommandLine.arguments.contains("--fills") || (window.width >= usable.width - 2 && window.height >= usable.height - 2)
+exit(usable.insetBy(dx: -2, dy: -2).contains(window) && window.width >= 400 && window.height >= 400 && fills ? 0 : 1)

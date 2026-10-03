@@ -1,7 +1,7 @@
 # Used by the GitHub build (.github/workflows/build.yml) on a Windows computer. Opens the Windows app in the folder
 # given, with a window kept bigger than any screen and Neutralino's old saved spot far off the screen (what made the
-# window disappear up to 2.9.0). Checks that the window opens inside the screen, closes it like the X button, and
-# checks that Lux kept the window's size for next time.
+# window disappear up to 2.9.0). Checks that the window opens inside the screen and takes up all of it, closes it like
+# the X button, and checks that Lux kept the window's size for next time.
 #   pwsh scripts/check-window.ps1 "<folder with LuxManagement.exe>"
 param([Parameter(Mandatory)][string]$Dir)
 $ErrorActionPreference = 'Stop'
@@ -39,6 +39,8 @@ $inside = $r.Left -ge $area.Left - 10 -and $r.Top -ge $area.Top - 1 -and $r.Righ
 if (-not ([LuxWin]::IsWindowVisible($h) -and $inside -and ($r.Right - $r.Left) -ge 400 -and ($r.Bottom - $r.Top) -ge 400)) {
   $p.Kill(); throw 'The Lux window is not on the screen.'
 }
+# Kept bigger than the screen, so it must take up all of the usable part of it.
+if (($r.Right - $r.Left) -lt $area.Width - 2 -or ($r.Bottom - $r.Top) -lt $area.Height - 2) { $p.Kill(); throw 'The Lux window is smaller than the screen allows.' }
 if (Test-Path "$Dir\.tmp\window_state.config.json") { $p.Kill(); throw "Neutralino's old window file was not removed." }
 
 # Close it like the X button: Lux saves its data and the window's size, then quits.

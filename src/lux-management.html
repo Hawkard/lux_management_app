@@ -3971,17 +3971,19 @@ async function quitApp(){
    out of sight every time. Lux now keeps only its size and whether it was maximized (in the settings file), and opens it
    in the middle of the main screen, never bigger than the screen. */
 const OLD_WINDOW_FILE = '/.tmp/window_state.config.json';
+// The window's starting size, as in app/neutralino.config.json.
+const START_SIZE = {width:1320, height:860};
 // The part of the main screen a window can use (without the taskbar, Dock or menu bar), in Neutralino's units: points
 // on a Mac, screen pixels on Windows. The page counts in CSS pixels, which on a scaled Windows screen are bigger (at
-// 150%, one CSS pixel is 1.5 screen pixels). That scale comes from where Neutralino has just put the window, centered on
-// the main screen at its starting size, so twice its left edge plus its width is the screen's width in screen pixels.
-// (The page's devicePixelRatio would also grow when the page is zoomed with Ctrl and +.) The area never goes beyond
-// that screen.
-function screenArea(size, pos){
+// 150%, one CSS pixel is 1.5 screen pixels). That scale comes from where Neutralino has just put the window: it centers
+// it on the main screen as if it had the starting size (even when Windows made it smaller to fit a small screen), so
+// twice its left edge plus the starting width is the screen's width in screen pixels. (The page's devicePixelRatio
+// would also grow when the page is zoomed with Ctrl and +.) The area never goes beyond that screen.
+function screenArea(pos){
   const sc = window.screen || {};
   let k = 1, full = null;
   if (window.NL_OS === 'Windows'){
-    const fw = 2 * pos.x + size.width, fh = 2 * pos.y + size.height, r = sc.width > 0 ? fw / sc.width : 0;
+    const fw = 2 * pos.x + START_SIZE.width, fh = 2 * pos.y + START_SIZE.height, r = sc.width > 0 ? fw / sc.width : 0;
     if (r >= 0.5 && r <= 5 && fh > 0){ k = r; full = {w:fw, h:fh}; }
     else k = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
   }
@@ -4012,7 +4014,7 @@ async function placeWindow(){
   try {
     // Already maximized (a Windows shortcut set to open it maximized): left as it is.
     if (!(await W.isMaximized())){
-      const size = await W.getSize(), pos = await W.getPosition(), area = screenArea(size, pos);
+      const size = await W.getSize(), pos = await W.getPosition(), area = screenArea(pos);
       const fit = area && windowFit(size, pos, saved, area);
       // On a Mac, setting the size also puts the window in the middle of the main screen, below the menu bar.
       if (fit && IS_MAC()) await W.setSize({width:fit.width, height:fit.height});
@@ -4050,7 +4052,7 @@ async function keepWindow(make){
   try { await FSx.writeFile(tmp, txt); await FSx.move(tmp, f); }
   catch (e){ await FSx.writeFile(f, txt); try { await FSx.remove(tmp); } catch (e2) {} }
 }
-Object.assign(LUX_TEST, {screenArea, windowFit});
+Object.assign(LUX_TEST, {START_SIZE, screenArea, windowFit});
 // A Mac app needs a menu bar: without the Edit menu, ⌘C, ⌘V and ⌘A do nothing in the window.
 function setMacMenu(){
   if (!DESK || !IS_MAC() || !(Neutralino.window && Neutralino.window.setMainMenu)) return;
