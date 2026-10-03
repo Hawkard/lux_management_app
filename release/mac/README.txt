@@ -81,8 +81,9 @@ settings and backups are never touched, so macOS does not ask again.
   paste ~/Library/Application Support/Lux Management, double-click
   "Recover Lux.command", type the number of a version and press Enter.
 - If Lux is open but its window can't be seen (up to version 2.9.0): quit it
-  with Option-Command-Esc (Force Quit), then in Finder choose Go > Go to Folder,
-  paste ~/Library/Application Support/Lux Management/.tmp, delete
+  with Command-Q (its menu bar still shows), or Option-Command-Esc (Force Quit)
+  if that does nothing. Then in Finder choose Go > Go to Folder, paste
+  ~/Library/Application Support/Lux Management/.tmp, delete
   window_state.config.json and open Lux again. Since 2.9.1 the window always
   opens in the middle of the screen.
 
@@ -185,10 +186,11 @@ configurações e backups nunca são alterados, então o macOS não pergunta de 
   Ir para a Pasta, cole ~/Library/Application Support/Lux Management, clique duas
   vezes em "Recover Lux.command", digite o número de uma versão e pressione Enter.
 - Se o Lux está aberto mas a janela não aparece (até a versão 2.9.0): encerre-o
-  com Option-Command-Esc (Forçar Encerrar), depois no Finder escolha Ir > Ir para
-  a Pasta, cole ~/Library/Application Support/Lux Management/.tmp, apague
-  window_state.config.json e abra o Lux de novo. Desde a 2.9.1 a janela sempre
-  abre no meio da tela.
+  com Command-Q (a barra de menus dele continua aparecendo), ou com
+  Option-Command-Esc (Forçar Encerrar) se nada acontecer. Depois no Finder
+  escolha Ir > Ir para a Pasta, cole ~/Library/Application Support/Lux
+  Management/.tmp, apague window_state.config.json e abra o Lux de novo. Desde a
+  2.9.1 a janela sempre abre no meio da tela.
 
 MUDAR DE MAC
 Instale o app no Mac novo e copie a pasta

@@ -24,6 +24,14 @@ test('Neutralino never puts the window back by itself, and allows every window c
   const used = new Set([...src.matchAll(/\bW\.(\w+)\(|Neutralino\.window\.(\w+)/g)].map(m => 'window.' + (m[1] || m[2])));
   assert.ok(used.size >= 9, [...used].join(' '));
   for (const m of used) assert.ok(cfg.nativeAllowList.includes(m), m + ' is not in nativeAllowList');
+  // Neutralino's own setSize asks for the size first.
+  if (used.has('window.setSize')) assert.ok(cfg.nativeAllowList.includes('window.getSize'));
+});
+
+test('Lux knows the window’s starting size from the Neutralino settings', async t => {
+  const cfg = JSON.parse(readFileSync(new URL('../app/neutralino.config.json', import.meta.url), 'utf8'));
+  const L = await open(); t.after(() => L.close());
+  assert.deepEqual(plain(L.w.__lux.START_SIZE), { width: cfg.modes.window.width, height: cfg.modes.window.height });
 });
 
 test('windowFit leaves a window that fits, and brings back one that is too big or out of view', async t => {
@@ -54,17 +62,30 @@ test('windowFit leaves a window that fits, and brings back one that is too big o
   assert.deepEqual(fit(size, { x: 0, y: 110 }, {}, { x: 62, y: 0, w: 1858, h: 1080 }), { width: 1320, height: 860, x: 331, y: 110 });
 });
 
-test('screenArea is in screen pixels on Windows and in points on a Mac', async t => {
-  const screen = { availLeft: 0, availTop: 25, availWidth: 1280, availHeight: 672 };
-  const area = async (os, dpr, sc = screen) => {
+test('screenArea is in screen pixels on Windows, whatever the page zoom, and in points on a Mac', async t => {
+  // Where Neutralino has just put its 1320x860 window: in the middle of a 1920x1080 main screen (in screen pixels).
+  const centered = { x: 300, y: 110 };
+  // That screen at 150%, as the page sees it in CSS pixels, with a taskbar at the top.
+  const scaled = { width: 1280, height: 720, availLeft: 0, availTop: 25, availWidth: 1280, availHeight: 672 };
+  const area = async (os, dpr, sc, pos = centered) => {
     const L = await open({ neutralino: desk(), os, dpr, screen: sc });
-    try { return plain(L.w.__lux.screenArea()); } finally { L.close(); }
+    try { return plain(L.w.__lux.screenArea(pos)); } finally { L.close(); }
   };
-  // A Windows screen at 150%: 1280 CSS pixels are 1920 screen pixels.
-  assert.deepEqual(await area('Windows', 1.5), { x: 0, y: 38, w: 1920, h: 1008 });
-  assert.deepEqual(await area('Windows', 1), { x: 0, y: 25, w: 1280, h: 672 });
+  // Windows at 150%: 1280 CSS pixels are 1920 screen pixels...
+  assert.deepEqual(await area('Windows', 1.5, scaled), { x: 0, y: 38, w: 1920, h: 1008 });
+  // ...also when the page is zoomed to 150% with Ctrl and +, which makes devicePixelRatio 2.25.
+  assert.deepEqual(await area('Windows', 2.25, scaled), { x: 0, y: 38, w: 1920, h: 1008 });
+  // Windows at 100%.
+  assert.deepEqual(await area('Windows', 1, { width: 1920, height: 1080, availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1040 }), { x: 0, y: 0, w: 1920, h: 1040 });
+  // A scale that makes no sense (a page that reports another screen): never beyond the main screen.
+  assert.deepEqual(await area('Windows', 1, { width: 640, height: 400, availLeft: 0, availTop: 0, availWidth: 640, availHeight: 400 }), { x: 0, y: 0, w: 1920, h: 1080 });
+  // No screen width to work from: devicePixelRatio it is.
+  assert.deepEqual(await area('Windows', 1.5, { availLeft: 0, availTop: 0, availWidth: 1280, availHeight: 672 }), { x: 0, y: 0, w: 1920, h: 1008 });
+  // A 1024x768 screen, smaller than the starting size: Neutralino centers the window as if it were 1320x860, at
+  // (-148, -46), though Windows made it smaller.
+  assert.deepEqual(await area('Windows', 1, { width: 1024, height: 768, availLeft: 0, availTop: 0, availWidth: 1024, availHeight: 720 }, { x: -148, y: -46 }), { x: 0, y: 0, w: 1024, h: 720 });
   // A Mac: Neutralino and the page both count in points, whatever the Retina scale.
-  assert.deepEqual(await area('Darwin', 2), { x: 0, y: 25, w: 1280, h: 672 });
+  assert.deepEqual(await area('Darwin', 2, scaled, { x: 60, y: 20 }), { x: 0, y: 25, w: 1280, h: 672 });
   // No usable size (jsdom's screen, or a broken one): no area, so the window is left alone.
   assert.equal(await area('Windows', 1, {}), null);
   assert.equal(await area('Windows', 1, { availWidth: 200, availHeight: 100 }), null);
@@ -93,12 +114,17 @@ test('desktop: the saved size is used but never bigger than the screen, and a ma
   assert.deepEqual(L.errors, []);
 });
 
-test('desktop: a Windows screen at 150% and a Mac with a menu bar', async t => {
-  // Windows at 150%: the area is 1920x1008 screen pixels, so a saved 1600x1000 window fits and goes in the middle.
-  let N = desk({ window: { width: 1600, height: 1000, maximized: false } });
-  let L = await open({ neutralino: N, os: 'Windows', dpr: 1.5, screen: { availLeft: 0, availTop: 0, availWidth: 1280, availHeight: 672 } });
-  assert.deepEqual(N.winCalls, [['setSize', 1600, 1000], ['move', 160, 4]]);
-  L.close();
+test('desktop: a Windows screen at 150% (zoomed or not) and a Mac with a menu bar', async t => {
+  // Windows at 150%: the area is 1920x1008 screen pixels, so a saved 1600x1000 window fits and goes in the middle,
+  // also when the page was left zoomed in.
+  const win150 = { width: 1280, height: 720, availLeft: 0, availTop: 0, availWidth: 1280, availHeight: 672 };
+  let N, L;
+  for (const dpr of [1.5, 2.25, 4.5]){
+    N = desk({ window: { width: 1600, height: 1000, maximized: false } });
+    L = await open({ neutralino: N, os: 'Windows', dpr, screen: win150 });
+    assert.deepEqual(N.winCalls, [['setSize', 1600, 1000], ['move', 160, 4]], 'devicePixelRatio ' + dpr);
+    L.close();
+  }
   // A Mac's 1440x900 screen with a 25-point menu bar and the Dock: a window too tall for it gets the height there is,
   // and the Mac centers it below the menu bar when its size is set.
   N = desk({}, { x: 60, y: 20 });
@@ -139,6 +165,79 @@ test('desktop: closing Lux keeps the window size for next time, but not a minimi
   assert.deepEqual(kept(N), { width: 1500, height: 900, maximized: true });
   assert.equal(N.exited, 4);
   assert.deepEqual(L.errors, []);
+});
+
+test('desktop: a Windows screen smaller than the starting size gets a window as big as the screen allows', async t => {
+  // What GitHub's Windows computer showed: a 1024x768 screen with a 48-pixel taskbar. Neutralino centered the window
+  // as if it were 1320x860, at (-148, -46); Windows made it 1044x788, the most it allows there.
+  const N = desk({ window: { width: 5000, height: 4000, maximized: false } }, { x: -148, y: -46, width: 1044, height: 788 });
+  const L = await open({ neutralino: N, os: 'Windows', dpr: 1, screen: { width: 1024, height: 768, availLeft: 0, availTop: 0, availWidth: 1024, availHeight: 720 } });
+  t.after(() => L.close());
+  assert.deepEqual(N.winCalls, [['setSize', 1024, 720], ['move', 0, 0]]);
+});
+
+test('desktop: closing Lux writes only the window entry, into the settings as they are now, and only when it changed', async t => {
+  const CFG = '/app/config/settings.json';
+  const N = desk({ window: { width: 1000, height: 700, maximized: false } });
+  const L = await open({ neutralino: N, screen: FULL_HD }); t.after(() => L.close());
+  // Another Lux window on this computer moves the data folder and switches user while this one is open.
+  N.write(CFG, Object.assign(N.read(CFG), { dataDir: '/shared/drive', userId: 'u9' }));
+  Object.assign(N.win, { width: 1200, height: 800 });
+  await close(L, N);
+  assert.equal(N.read(CFG).dataDir, '/shared/drive');
+  assert.equal(N.read(CFG).userId, 'u9');
+  assert.deepEqual(kept(N), { width: 1200, height: 800, maximized: false });
+  assert.equal(N.files.has(CFG + '.tmp'), false);
+  // The same size again: the file is not touched.
+  const at = N.mtime.get(CFG);
+  await close(L, N);
+  assert.equal(N.mtime.get(CFG), at);
+  assert.equal(N.exited, 2);
+});
+
+test('desktop: switching user (Lux restarts) keeps the window size too', async t => {
+  const CFG = '/app/config/settings.json';
+  const N = desk({ window: { width: 1000, height: 700, maximized: false } });
+  const L = await open({ neutralino: N, screen: FULL_HD }); t.after(() => L.close());
+  Object.assign(N.win, { width: 1100, height: 750 });
+  await L.go('#settings');
+  L.click(L.button('Switch user'));
+  await L.sleep(100);
+  L.click(L.$$('.modal button').find(b => b.textContent === 'Switch user'));
+  await L.sleep(400);
+  assert.equal(N.restarted, 1);
+  assert.equal(N.read(CFG).userId, '');
+  assert.deepEqual(kept(N), { width: 1100, height: 750, maximized: false });
+  assert.deepEqual(L.errors, []);
+});
+
+test('desktop: coming from 2.9.0, the size and maximized state Neutralino kept are used once, never its spot', async t => {
+  const N = desk({}, {}, { [OLD_FILE]: { x: 6000, y: 4000, width: 1000, height: 700, maximize: true } });
+  const L = await open({ neutralino: N, screen: FULL_HD }); t.after(() => L.close());
+  assert.deepEqual(N.winCalls, [['setSize', 1000, 700], ['move', 460, 170], ['maximize']]);
+  assert.equal(N.files.has(OLD_FILE), false);
+  // Lux's own entry wins over an old file.
+  const N2 = desk({ window: { width: 1320, height: 860, maximized: false } }, {}, { [OLD_FILE]: { x: 0, y: 0, width: 1000, height: 700, maximize: true } });
+  const L2 = await open({ neutralino: N2, screen: FULL_HD }); t.after(() => L2.close());
+  assert.deepEqual(N2.winCalls, []);
+  assert.equal(N2.files.has(OLD_FILE), false);
+});
+
+test('desktop: a window that opens maximized is left maximized', async t => {
+  const N = desk({ window: { width: 1000, height: 700, maximized: false } }, { maximized: true, x: -8, y: -8, width: 1936, height: 1056 });
+  const L = await open({ neutralino: N, screen: FULL_HD }); t.after(() => L.close());
+  assert.deepEqual(N.winCalls, []);
+});
+
+test('desktop: Lux opens even if the window never answers when it starts', async t => {
+  const N = desk();
+  N.window.getSize = () => new Promise(() => {});
+  const L = await open({ neutralino: N, screen: FULL_HD }); t.after(() => L.close());
+  // Lux waits for the window for 2 seconds at most, then carries on, and handles closing.
+  await L.sleep(2200);
+  N.emit('windowClose');
+  await L.sleep(2000);
+  assert.equal(N.exited, 1);
 });
 
 test('desktop: a damaged window entry in the settings file is ignored', async t => {

@@ -23,7 +23,7 @@ The internal workspace for Lux Management: models, team, accounts, subreddits, p
 ## Shipping an update
 
 1. **Change the program** in `src/lux-management.html` and raise the version in
-   `const APP_VERSION = '2.9.1';` (for example to `2.10.0`).
+   `const APP_VERSION = '2.9.2';` (for example to `2.10.0`).
 2. **Add release notes** to the top of `CHANGELOG.md`:
    ```
    ## 2.10.0

@@ -376,7 +376,7 @@ function t(s, vars){
 }
 const LOC = () => LANG === 'pt' ? 'pt-BR' : undefined;
 const DESK = typeof window.Neutralino !== 'undefined' && !!window.NL_OS;
-const APP_VERSION = '2.9.1';
+const APP_VERSION = '2.9.2';
 const LUX_TEST = {};
 if (location.hostname === 'lux.test') window.__lux = LUX_TEST;
 function setLang(l){
@@ -3969,16 +3969,28 @@ async function quitApp(){
 /* The window. Up to 2.9.0, Neutralino put it back exactly where it was when Lux closed, without checking that the spot
    is still on a screen (a second screen that was unplugged, a window dragged or resized out of view), so it could open
    out of sight every time. Lux now keeps only its size and whether it was maximized (in the settings file), and opens it
-   in the middle of the screen, never bigger than the screen. */
+   in the middle of the main screen, never bigger than the screen. */
 const OLD_WINDOW_FILE = '/.tmp/window_state.config.json';
-// Neutralino measures the window in screen pixels on Windows and in points on a Mac. The page measures in CSS pixels,
-// which are bigger on a scaled Windows screen (at 150%, one CSS pixel is 1.5 screen pixels).
-const winUnit = () => IS_MAC() ? 1 : (window.devicePixelRatio > 0 ? window.devicePixelRatio : 1);
-// The part of the screen a window can use (without the taskbar, Dock or menu bar), in Neutralino's units.
-function screenArea(){
-  const sc = window.screen || {}, k = winUnit();
-  const a = {x:Math.round((sc.availLeft || 0) * k), y:Math.round((sc.availTop || 0) * k), w:Math.floor((sc.availWidth || 0) * k), h:Math.floor((sc.availHeight || 0) * k)};
-  return a.w >= 320 && a.h >= 240 ? a : null;
+// The window's starting size, as in app/neutralino.config.json.
+const START_SIZE = {width:1320, height:860};
+// The part of the main screen a window can use (without the taskbar, Dock or menu bar), in Neutralino's units: points
+// on a Mac, screen pixels on Windows. The page counts in CSS pixels, which on a scaled Windows screen are bigger (at
+// 150%, one CSS pixel is 1.5 screen pixels). That scale comes from where Neutralino has just put the window: it centers
+// it on the main screen as if it had the starting size (even when Windows made it smaller to fit a small screen), so
+// twice its left edge plus the starting width is the screen's width in screen pixels. (The page's devicePixelRatio
+// would also grow when the page is zoomed with Ctrl and +.) The area never goes beyond that screen.
+function screenArea(pos){
+  const sc = window.screen || {};
+  let k = 1, full = null;
+  if (window.NL_OS === 'Windows'){
+    const fw = 2 * pos.x + START_SIZE.width, fh = 2 * pos.y + START_SIZE.height, r = sc.width > 0 ? fw / sc.width : 0;
+    if (r >= 0.5 && r <= 5 && fh > 0){ k = r; full = {w:fw, h:fh}; }
+    else k = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  }
+  let x = Math.round((sc.availLeft || 0) * k), y = Math.round((sc.availTop || 0) * k);
+  let w = Math.floor((sc.availWidth || 0) * k), h = Math.floor((sc.availHeight || 0) * k);
+  if (full){ x = Math.max(0, x); y = Math.max(0, y); w = Math.min(w, full.w - x); h = Math.min(h, full.h - y); }
+  return w >= 320 && h >= 240 ? {x, y, w, h} : null;
 }
 // Where the window goes: the saved size (or the size it has), never smaller than the window's minimum nor bigger than
 // the area, in the middle of the area. null when the window already has that size and is inside the area.
@@ -3990,18 +4002,26 @@ function windowFit(size, pos, saved, area){
   if (w === size.width && ht === size.height && inside) return null;
   return {width:w, height:ht, x:area.x + Math.round((area.w - w) / 2), y:area.y + Math.round((area.h - ht) / 2)};
 }
-const keptWindow = () => { const v = S.desk.cfg.window; return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+const windowOf = cfg => { const v = cfg && cfg.window; return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
 async function placeWindow(){
-  const W = Neutralino.window, saved = keptWindow();
-  try { await Neutralino.filesystem.remove(S.desk.appDir + OLD_WINDOW_FILE); } catch (e) {}
+  const W = Neutralino.window, old = S.desk.appDir + OLD_WINDOW_FILE;
+  let saved = windowOf(S.desk.cfg);
+  // Once, coming from 2.9.0 or earlier: the size Neutralino kept, and whether the window was maximized (never its spot).
+  if (!S.desk.cfg.window){
+    try { const o = JSON.parse(await Neutralino.filesystem.readFile(old)); saved = {width:o.width, height:o.height, maximized:o.maximize === true}; } catch (e) {}
+  }
+  try { await Neutralino.filesystem.remove(old); } catch (e) {}
   try {
-    const area = screenArea(), size = await W.getSize();
-    const fit = area && windowFit(size, await W.getPosition(), saved, area);
-    // On a Mac, setting the size also centers the window on its screen, below the menu bar.
-    if (fit && IS_MAC()) await W.setSize({width:fit.width, height:fit.height});
-    else if (fit){
-      if (fit.width !== size.width || fit.height !== size.height) await W.setSize({width:fit.width, height:fit.height});
-      await W.move(fit.x, fit.y);
+    // Already maximized (a Windows shortcut set to open it maximized): left as it is.
+    if (!(await W.isMaximized())){
+      const size = await W.getSize(), pos = await W.getPosition(), area = screenArea(pos);
+      const fit = area && windowFit(size, pos, saved, area);
+      // On a Mac, setting the size also puts the window in the middle of the main screen, below the menu bar.
+      if (fit && IS_MAC()) await W.setSize({width:fit.width, height:fit.height});
+      else if (fit){
+        if (fit.width !== size.width || fit.height !== size.height) await W.setSize({width:fit.width, height:fit.height});
+        await W.move(fit.x, fit.y);
+      }
     }
     if (saved.maximized === true) await W.maximize();
   } catch (e){ console.warn('window', e); }
@@ -4012,12 +4032,27 @@ async function rememberWindow(){
   const W = Neutralino.window;
   try {
     if (await W.isMinimized() || await W.isFullScreen()) return;
-    if (await W.isMaximized()){ const k = keptWindow(); await saveConfig({window:{width:k.width, height:k.height, maximized:true}}); return; }
+    if (await W.isMaximized()) return await keepWindow(prev => ({width:prev.width, height:prev.height, maximized:true}));
     const s = await W.getSize();
-    if (s.width >= 100 && s.height >= 100) await saveConfig({window:{width:s.width, height:s.height, maximized:false}});
+    if (s.width >= 100 && s.height >= 100) await keepWindow(() => ({width:s.width, height:s.height, maximized:false}));
   } catch (e) {}
 }
-Object.assign(LUX_TEST, {screenArea, windowFit});
+// Writes only the window entry into this computer's settings file, as the file is now: another Lux window on this
+// computer may have changed other settings since this one opened (the data folder, who is using it). Nothing is written
+// when the entry is the same, and the file is replaced in one step, so it is never left half-written.
+async function keepWindow(make){
+  const FSx = Neutralino.filesystem, f = S.desk.cfgFile;
+  let cfg;
+  try { cfg = JSON.parse(await FSx.readFile(f)); } catch (e) {}
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) cfg = {...S.desk.cfg};
+  const prev = windowOf(cfg), next = make(prev);
+  if (['width', 'height', 'maximized'].every(k => prev[k] === next[k])) return;
+  cfg.window = S.desk.cfg.window = next;
+  const txt = JSON.stringify(cfg, null, 2), tmp = f + '.tmp';
+  try { await FSx.writeFile(tmp, txt); await FSx.move(tmp, f); }
+  catch (e){ await FSx.writeFile(f, txt); try { await FSx.remove(tmp); } catch (e2) {} }
+}
+Object.assign(LUX_TEST, {START_SIZE, screenArea, windowFit});
 // A Mac app needs a menu bar: without the Edit menu, ⌘C, ⌘V and ⌘A do nothing in the window.
 function setMacMenu(){
   if (!DESK || !IS_MAC() || !(Neutralino.window && Neutralino.window.setMainMenu)) return;
