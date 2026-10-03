@@ -67,10 +67,10 @@ jobs:
           echo '{"x":6000,"y":4000,"width":1320,"height":860,"maximize":false,"minWidth":480,"minHeight":560,"maxWidth":-1,"maxHeight":-1,"resizable":true}' > "$H/.tmp/window_state.config.json"
           open "$RUNNER_TEMP/Lux Management.app"
           for i in $(seq 1 45); do [ -f "$H/versions/index.json" ] && break; sleep 2; done
-          test -f "$H/versions/index.json" || { pkill -x LuxManagement; echo "The Mac app did not open."; exit 1; }
+          test -f "$H/versions/index.json" || { pkill -x LuxManagement || true; echo "The Mac app did not open."; exit 1; }
           echo "The Mac app opened."
           sleep 3
-          swift scripts/check-window.swift || { pkill -x LuxManagement; echo "The Lux window is not on the screen."; exit 1; }
+          swift scripts/check-window.swift || { pkill -x LuxManagement || true; echo "The Lux window is not on the screen."; exit 1; }
           pkill -x LuxManagement || true
           test ! -f "$H/.tmp/window_state.config.json" || { echo "Neutralino's old window file was not removed."; exit 1; }
 

@@ -50,8 +50,8 @@ export async function open({ seed = {}, lang, claude, neutralino, os = 'Linux', 
 // started is recorded in spawned ({id, command, cwd, config, text}), and every one stopped in killed.
 // mtime holds each file's modification time in milliseconds, like Neutralino's getStats; a test may set it.
 // win: how the window starts (size and position in Neutralino's units, maximized, minimized, fullScreen); win.fail makes
-// every window call fail, as when it is not allowed. winCalls lists every change Lux makes to the window, and exited
-// counts the times Lux closed itself.
+// every window call fail, as when it is not allowed. winCalls lists every change Lux makes to the window; exited and
+// restarted count the times Lux closed or restarted itself.
 export function fakeNeutralino(start, { curl, win: winStart } = {}){
   const files = new Map(), dirs = new Set(), mtime = new Map(), handlers = {};
   const spawned = [], killed = [];
@@ -66,7 +66,7 @@ export function fakeNeutralino(start, { curl, win: winStart } = {}){
   const winCalls = [];
   const winApi = fn => async (...a) => { if (win.fail) throw { code: 'NE_RT_NATPRME', message: 'not allowed' }; return fn(...a); };
   const N = {
-    files, mtime, emit, curl, spawned, killed, win, winCalls, exited: 0,
+    files, mtime, emit, curl, spawned, killed, win, winCalls, exited: 0, restarted: 0,
     read: p => files.has(p) ? JSON.parse(files.get(p)) : undefined,
     write: (p, v) => put(p, JSON.stringify(v)),
     init: () => { setTimeout(() => emit('ready'), 0); },
@@ -110,7 +110,7 @@ export function fakeNeutralino(start, { curl, win: winStart } = {}){
       },
       updateSpawnedProcess: async (id, action) => { if (action === 'exit') killed.push(id); }
     },
-    app: { exit: async () => { N.exited++; }, restartProcess: async () => {} },
+    app: { exit: async () => { N.exited++; }, restartProcess: async () => { N.restarted++; } },
     window: {
       setMainMenu: async () => {},
       getSize: winApi(() => ({ width: win.width, height: win.height, minWidth: 480, minHeight: 560, maxWidth: -1, maxHeight: -1, resizable: true })),

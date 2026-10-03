@@ -4,6 +4,10 @@ Each release needs a `## x.y.z` heading with an `EN:` line and a `PT:` line.
 Those two lines become the notes people see in Lux's update bar, in their own language.
 The version must match `const APP_VERSION` in `src/lux-management.html`.
 
+## 2.9.2
+EN: Desktop window: it always opens on the main screen, also when the page was zoomed in on Windows (Ctrl and +), and when updating from 2.9.0 or earlier it keeps the size it had. Closing Lux no longer undoes a change of data folder or user made in another Lux window on the same computer.
+PT: Janela do app de desktop: sempre abre na tela principal, também quando a página estava ampliada no Windows (Ctrl e +), e ao atualizar da 2.9.0 ou anterior mantém o tamanho que tinha. Fechar o Lux não desfaz mais uma troca de pasta de dados ou de usuário feita em outra janela do Lux no mesmo computador.
+
 ## 2.9.1
 EN: Fixes the desktop window opening out of sight, every time, after it had been moved or resized off the screen or onto a screen that was later unplugged. The window now always opens in the middle of the screen, never bigger than the screen, keeping its size, or maximized if it was.
 PT: Corrige a janela do app de desktop abrindo fora da tela, toda vez, depois de ter sido movida ou redimensionada para fora da tela ou para uma tela que foi desconectada. Agora a janela sempre abre no meio da tela, nunca maior que a tela, com o tamanho que tinha, ou maximizada se estava.
