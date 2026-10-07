@@ -159,7 +159,7 @@ test('the All time CSV is named for all time and logged as such', async t => {
   assert.deepEqual(L.errors, []);
 });
 
-test('web store: a collection can be read newest first', async t => {
+test('web store: a collection that fits in one answer is a single query', async t => {
   const L = await open(); t.after(() => L.close());
   const calls = [];
   const query = parts => ({
@@ -168,9 +168,9 @@ test('web store: a collection can be read newest first', async t => {
     onSnapshot: next => { calls.push(parts.join('.')); next({ docs: [] }); return () => {}; }
   });
   const store = L.w.__lux.makeRemoteStore({ collection: c => query([`collection(${c})`]) });
-  store.watchCol('posts', () => {}, () => {}, 'weekStart');
+  store.watchCol('posts', () => {}, () => {});
   store.watchCol('models', () => {}, () => {});
-  assert.deepEqual(calls, ['collection(posts).orderBy(weekStart,desc).limit(1000)', 'collection(models).limit(1000)']);
+  assert.deepEqual(calls, ['collection(posts).limit(1000)', 'collection(models).limit(1000)']);
 });
 
 // A stand-in for the web version's database: documents in memory, with where, orderBy and limit applied
@@ -182,8 +182,9 @@ function fakeDb(docs){
     let list = Object.keys(docs).filter(p => p.slice(0, p.lastIndexOf('/')) === col).sort()
       .map(p => ({ id: p.slice(p.lastIndexOf('/') + 1), body: docs[p] }));
     for (const o of ops){
-      if (o.where) list = list.filter(r => o.op === 'in' ? o.v.includes(r.body[o.where]) : o.op === '==' ? r.body[o.where] === o.v : true);
-      if (o.orderBy) list = list.slice().sort((a, b) => (a.body[o.orderBy] < b.body[o.orderBy] ? -1 : a.body[o.orderBy] > b.body[o.orderBy] ? 1 : 0) * (o.dir === 'desc' ? -1 : 1));
+      if (o.where) list = list.filter(r => o.op === 'in' ? o.v.includes(r.body[o.where]) : o.op === '==' ? r.body[o.where] === o.v : o.op === '>' ? r.body[o.where] !== undefined && r.body[o.where] > o.v : true);
+      // Documents without the field go last.
+      if (o.orderBy) list = list.slice().sort((a, b) => { const x = a.body[o.orderBy], y = b.body[o.orderBy]; if (x === undefined || y === undefined) return (x === undefined) - (y === undefined); return (x < y ? -1 : x > y ? 1 : 0) * (o.dir === 'desc' ? -1 : 1); });
       if (o.limit) list = list.slice(0, o.limit);
     }
     return { docs: list.map(r => ({ id: r.id, exists: true, data: () => copy(r.body) })) };
@@ -205,12 +206,13 @@ function fakeDb(docs){
   return { queries, db: { collection: c => query(c, []), doc } };
 }
 
-// 1005 weekly documents with two posts each: "Newest" this week, "Oldest" 1004 weeks ago.
-function weeklyDocs(uid){
+// 1005 weekly documents with two posts each: "Newest" this week, "Oldest" 1004 weeks ago. keyed: with the key field
+// the web version writes since 2.9.3.
+function weeklyDocs(uid, keyed = false){
   const docs = {};
   for (let i = 0; i < 1005; i++){
     const ws = weekStart(daysAgo(7 * i));
-    docs[`posts/${ws}_${uid}`] = { weekStart: ws, uid, entries: [
+    docs[`posts/${ws}_${uid}`] = { weekStart: ws, uid, ...(keyed ? { _k: `${ws}_${uid}` } : {}), entries: [
       { id: 'w' + i, d: ws, tm: '10:00', p: 'TikTok', q: 1, ty: 'Video', title: i === 0 ? 'Newest' : i === 1004 ? 'Oldest' : 'Week ' + i },
       { id: 'v' + i, d: ws, tm: '09:00', p: 'TikTok', q: 1, ty: 'Video', title: 'Early ' + i } ] };
   }
@@ -231,20 +233,20 @@ test('local preview: All time loads every week, and the notes offer the CSV', as
   assert.deepEqual(L.errors, []);
 });
 
-test('web version: All time shows the newest 1000 weeks and says older ones are left out', async t => {
-  const { db, queries } = fakeDb(weeklyDocs('u1'));
+test('web version: All time loads every week, more than 1000, and the notes offer the CSV', async t => {
+  const { db, queries } = fakeDb(weeklyDocs('u1', true));
   const L = await open({ claude: webClaude(db) }); t.after(() => L.close());
   await L.go('#posts');
-  L.click(L.button('All time')); await L.sleep(500);
-  assert.deepEqual(queries.filter(q => q.col === 'posts').pop().ops, [{ orderBy: 'weekStart', dir: 'desc' }, { limit: 1000 }]);
+  L.click(L.button('All time')); await L.sleep(800);
+  const pq = queries.filter(q => q.col === 'posts').map(q => JSON.stringify(q.ops));
+  assert.ok(pq.includes(JSON.stringify([{ limit: 1000 }])) && pq.includes(JSON.stringify([{ orderBy: '_k', dir: 'asc' }, { where: '_k', op: '>', v: [...Object.keys(weeklyDocs('u1'))].sort()[999].split('/')[1] }, { limit: 1000 }])), pq.join(' | '));
   assert.equal(L.$('.entry .etitle').textContent, 'Newest');
-  assert.ok(L.$$('.tbl b').some(b => b.textContent === '2000'), 'the newest 1000 weeks are loaded');
-  assert.ok(hasText(L, olderNote));
-  // The CSV holds only the loaded weeks, so the notes don't offer it.
-  assert.ok(hasText(L, 'Showing the latest 120 days.'));
+  assert.ok(L.$$('.tbl b').some(b => b.textContent === '2010'), 'all 1005 weeks are loaded');
+  assert.ok(!hasText(L, olderNote));
+  assert.ok(hasText(L, 'Showing the latest 120 days. Export CSV to see everything.'));
   mode(L, 'Stats'); await L.sleep(500);
-  assert.ok(hasText(L, olderNote));
-  assert.ok(hasText(L, 'Showing the latest 1500 posts.'));
+  assert.ok(!hasText(L, olderNote));
+  assert.ok(hasText(L, 'Showing the latest 1500 posts. Export CSV to see everything.'));
   mode(L, 'Entries'); await L.sleep(300);
   L.click(L.button('This month')); await L.sleep(400);
   assert.equal(queries.filter(q => q.col === 'posts').pop().ops[0].where, 'weekStart');
@@ -253,13 +255,12 @@ test('web version: All time shows the newest 1000 weeks and says older ones are 
 });
 
 test('web version: the notes are translated', async t => {
-  const { db } = fakeDb(weeklyDocs('u1'));
+  const { db } = fakeDb(weeklyDocs('u1', true));
   const L = await open({ claude: webClaude(db), lang: 'pt' }); t.after(() => L.close());
   await L.go('#posts');
-  L.click(L.button('Todo o período')); await L.sleep(500);
-  assert.ok(hasText(L, 'Só as semanas mais recentes são carregadas aqui, então os posts mais antigos não aparecem nem são exportados.'));
-  assert.ok(hasText(L, 'Mostrando os últimos 120 dias.'));
+  L.click(L.button('Todo o período')); await L.sleep(800);
+  assert.ok(hasText(L, 'Mostrando os últimos 120 dias. Exporte o CSV para ver tudo.'));
   mode(L, 'Estatísticas'); await L.sleep(500);
-  assert.ok(hasText(L, 'Mostrando os últimos 1500 posts.'));
+  assert.ok(hasText(L, 'Mostrando os últimos 1500 posts. Exporte o CSV para ver tudo.'));
   assert.deepEqual(L.errors, []);
 });
