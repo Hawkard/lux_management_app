@@ -4,6 +4,10 @@ Each release needs a `## x.y.z` heading with an `EN:` line and a `PT:` line.
 Those two lines become the notes people see in Lux's update bar, in their own language.
 The version must match `const APP_VERSION` in `src/lux-management.html`.
 
+## 2.9.3
+EN: Web version (Claude artifact): every list now loads in full, past the 1000 records the shared database returns at a time, and stays live as teammates make changes. All time in the posting log shows every week, and backups, exports and the duplicate-link check include everything. The desktop app is unchanged.
+PT: Versão web (artifact do Claude): todas as listas agora carregam por inteiro, além dos 1000 registros que o banco compartilhado devolve de cada vez, e continuam ao vivo enquanto a equipe faz mudanças. Todo o período no registro de postagens mostra todas as semanas, e backups, exportações e a checagem de links repetidos incluem tudo. O app de desktop não muda.
+
 ## 2.9.2
 EN: Desktop window: it always opens on the main screen, also when the page was zoomed in on Windows (Ctrl and +), and when updating from 2.9.0 or earlier it keeps the size it had. Closing Lux no longer undoes a change of data folder or user made in another Lux window on the same computer.
 PT: Janela do app de desktop: sempre abre na tela principal, também quando a página estava ampliada no Windows (Ctrl e +), e ao atualizar da 2.9.0 ou anterior mantém o tamanho que tinha. Fechar o Lux não desfaz mais uma troca de pasta de dados ou de usuário feita em outra janela do Lux no mesmo computador.

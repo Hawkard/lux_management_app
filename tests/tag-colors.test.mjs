@@ -551,7 +551,7 @@ test('web version: colors come from the shared document, quick changes are all s
   L.click(colorButton(L, 'Alt')); L.click(swatch(L, 'Pink'));
   assert.deepEqual(popRows(L), [['Alt', rgb(PINK), rgb(PINK)], ['Goth', rgb(TEAL), rgb(TEAL)]], 'shown at once');
   await L.sleep(700);
-  assert.deepEqual(docs['meta/tagColors'], { colors: { alt: PINK, goth: TEAL } });
+  assert.deepEqual(docs['meta/tagColors'], { colors: { alt: PINK, goth: TEAL }, _k: 'tagColors' });
   const logged = Object.entries(docs).filter(([k]) => k.startsWith('audit/u1/m/')).flatMap(([, v]) => v.entries);
   assert.deepEqual(logged.map(e => [e.n, e.ch[0].to]).sort(), [['Alt', PINK], ['Goth', TEAL]]);
   await escape(L);
@@ -583,7 +583,7 @@ test('web version: a color picked here is added to the shared document as it is 
   await openTags(L);
   await pickColor(L, 'Goth', 'Teal');
   await L.sleep(200);
-  assert.deepEqual(docs['meta/tagColors'], { colors: { alt: PINK, goth: TEAL }, note: 'kept' });
+  assert.deepEqual(docs['meta/tagColors'], { colors: { alt: PINK, goth: TEAL }, note: 'kept', _k: 'tagColors' });
   assert.deepEqual(L.errors, []);
 });
 
